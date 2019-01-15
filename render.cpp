@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <string>
 #include <deque>
+#include <list>
+#include <map>
+#include <utility>
 
 ///// capacitive touch stuff///
 #include "I2C_MPR121.h"
@@ -14,6 +17,7 @@
 #undef DEBUG_MPR121
 //////////////////////////////
 
+#define ENV_INFO_BUF_SIZE 16
 
 using namespace std;
 
@@ -33,14 +37,22 @@ void readMPR121(void*);
 
 
 ///// contact mic and accelerometer and triggering //////
-float analogIn[3];
-float smoothedIn[3];
-float detailIn[3];
-float smoothedDetail[3];
-float rs[3] = { 0.05f, 0.05f, 0.05f };
-float rd[3] = { 0.25f, 0.25f, 0.25f };
-bool kerbang[3] = { false, false, false };
-TimedSchottky trigger[3] = { TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024) };
+float capacitiveIn[NUM_TOUCH_PINS];
+float capacitiveSmoothed[NUM_TOUCH_PINS];
+float capacitiveDetail[NUM_TOUCH_PINS];
+float capacitiveSmoothedDetail[NUM_TOUCH_PINS];
+float capacitiveRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f };
+float capacitiveRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f };
+bool capacitiveKerbang[NUM_TOUCH_PINS] = { false, false, false };
+TimedSchottky capacitiveTrigger[NUM_TOUCH_PINS] = { TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024) };
+
+float accIn[NUM_TOUCH_PINS];
+float accSmoothed[NUM_TOUCH_PINS];
+float accDetail[NUM_TOUCH_PINS];
+float accSmoothedDetail[NUM_TOUCH_PINS];
+float accRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f };
+float accRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f };
+
 int solenoidForChannel[8] = { 0, -1, 1, 2, -1, -1, -1, -1};
 //----------------------------------------------------//
 
@@ -48,6 +60,8 @@ int solenoidForChannel[8] = { 0, -1, 1, 2, -1, -1, -1, -1};
 AuxiliaryTask oscServerTask;
 AuxiliaryTask oscClientTask;
 AuxiliaryTask playTask;
+AuxiliaryTask createEnvelopesTask;
+AuxiliaryTask cleanupInactiveEnvelopesTask;
 OSCServer oscServer;
 OSCClient oscClient;
 deque<oscpkt::Message> outbox;
@@ -58,6 +72,88 @@ Scope scope;
 int localPort = 8000;
 
 OneShot hits[3];
+
+map<uint32_t,Carrier*>cycles;
+Carrier* baseFaceCarriers[NUM_TOUCH_PINS];
+
+list<Envelope*>envelopes;
+//float cyc_freqs[3] = { 500.0f, 1000.0f, 2000.0f };
+//float cyc_amps[3] = { 1.0f, 1.0f, 1.0f };
+
+UniqueID id_gen(NUM_TOUCH_PINS);
+
+// uint32_t addEnvelope(uint64_t start_time,SID id,SID carrier_id) {
+// 	Envelope* env = new Envelope(start_time);
+// 	env->id = id;
+// 	env->carrier_id = carrier_id;
+// 	envelopes.push_back(env);
+// 	printf("Added Envelope. Start: %lld  id: %lld  carrier: %lld\n",env->start,env->id,env->carrier_id);
+// 	return envelopes.size();
+// }
+
+
+uint32_t addEnvelope(const ADSR& adsr) {
+	ADSR* env = new ADSR(adsr);
+	//env->start = adsr.start;
+	// env->duration = adsr.duration;
+	// env->id = adsr.id;
+	// env->carrier_id = adsr.carrier_id;
+	// env->attack = adsr.attack;
+	// env->decay = adsr.decay;
+	// env->sustain = adsr.sustain;
+	// env->release = adsr.release;
+	envelopes.push_back(env);
+	//printf("Added Envelope. Start: %lld  duration: %lld  id: %lld  carrier: %lld  attack: %lld  decay: %lld  sustain: %1.2f  release: %lld\n",
+				//env->start,env->duration,env->id,env->carrier_id,env->attack,env->decay,env->sustain,env->release);
+	return envelopes.size();
+}
+
+
+ADSR toBeAdded[ENV_INFO_BUF_SIZE];
+uint32_t toBeAddedIndex = 0;
+uint32_t markEnvelopeForAdding(ADSR& adsr)
+{
+	toBeAdded[toBeAddedIndex] = adsr;
+	toBeAddedIndex = (++toBeAddedIndex) % ENV_INFO_BUF_SIZE;	
+	return toBeAddedIndex;	
+}
+
+void addEnvelopes(void *clientData)
+{
+	for (int i=0; i<ENV_INFO_BUF_SIZE; i++)
+	{
+		ADSR& adsr = toBeAdded[i];
+		if (adsr.id > 0) {
+			addEnvelope(adsr);
+			adsr.id = 0;
+		}
+	}
+}
+
+
+void cleanupInactiveEnvelopes(void *clientData)
+{
+	BelaContext *context = (BelaContext*)clientData;
+	uint64_t time = context->audioFramesElapsed; 
+	
+	list<Envelope*>::iterator it = envelopes.begin();
+	//list<Envelope*>::iterator end  = items.end();
+
+	while (it != envelopes.end()) {
+    	Envelope* env = *it;
+
+    	if (env->active(time)) {
+        	++it;
+    	} else {
+        	delete(env);
+        	it = envelopes.erase(it);
+		}
+	}
+	return;
+}
+
+
+
 
 // struct transport {
 // 	int bar;
@@ -118,7 +214,6 @@ void scheduleNotes(int bar, int beat, int tick, string letter)
 	}
 	
 }
-
 
 
 
@@ -250,7 +345,16 @@ bool setup(BelaContext *context, void *userData)
 	oscServerTask = Bela_createAuxiliaryTask(receiveOSC, BELA_AUDIO_PRIORITY - 30, "receive-osc", NULL);
 	oscClientTask = Bela_createAuxiliaryTask(sendOSC, BELA_AUDIO_PRIORITY - 20, "send-osc", NULL);
 	playTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 10,"play", NULL);
+	createEnvelopesTask = Bela_createAuxiliaryTask(addEnvelopes, BELA_AUDIO_PRIORITY - 40,"add-envelopes", NULL);
+	cleanupInactiveEnvelopesTask = Bela_createAuxiliaryTask(cleanupInactiveEnvelopes, BELA_AUDIO_PRIORITY - 50,"cleanup-envelopes", context);
 	
+	baseFaceCarriers[0] = new SawWave(1,5000.0f,1.0f);
+	baseFaceCarriers[1] = new SawWave(2,7500.0f,1.0f);
+	baseFaceCarriers[2] = new SawWave(3,10000.0f,1.0f);
+	cycles.insert(make_pair(1,baseFaceCarriers[0]));
+	cycles.insert(make_pair(2,baseFaceCarriers[1]));
+	cycles.insert(make_pair(3,baseFaceCarriers[2]));
+		
 	gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	changeTempo(120.0f, context->analogSampleRate);
 	
@@ -259,10 +363,10 @@ bool setup(BelaContext *context, void *userData)
 		return false;
 	}
 	
-	i2cTask = Bela_createAuxiliaryTask(readMPR121, 50, "bela-mpr121");
+	i2cTask = Bela_createAuxiliaryTask(readMPR121, BELA_AUDIO_PRIORITY - 15, "bela-mpr121");
 	//readIntervalSamples = context->audioSampleRate / readInterval;
 	
-	scope.setup(2,context->audioSampleRate);
+	scope.setup(3,context->audioSampleRate);
 	
 	return true;
 }
@@ -273,33 +377,45 @@ void render(BelaContext *context, void *userData)
 	Bela_scheduleAuxiliaryTask(oscClientTask);
 	Bela_scheduleAuxiliaryTask(playTask);
 	Bela_scheduleAuxiliaryTask(i2cTask);
+	Bela_scheduleAuxiliaryTask(createEnvelopesTask);
+	Bela_scheduleAuxiliaryTask(cleanupInactiveEnvelopesTask);
 	
 	for (unsigned int frame = 0; frame < context->audioFrames; ++frame)
 	{
-
+		uint64_t t = context->audioFramesElapsed + frame;
+		
 		// Capacitive Sensing
-		float amps[NUM_TOUCH_PINS] = {0.0f, 0.0f, 0.0f};
+		//float amps[NUM_TOUCH_PINS] = {0.0f, 0.0f, 0.0f};
 		for(int i = 0; i < NUM_TOUCH_PINS; i++) {
 			float value = sensorValue[i] / 400.f;
-			amps[i] = value;
+			capacitiveIn[i] = value;
 					
 			// Exponential filter bank (separates DC from AC)
-			smoothedIn[i] = ewma(value, smoothedIn[i], rs[i]);
-			detailIn[i] = value - smoothedIn[i];
+			capacitiveSmoothed[i] = ewma(value, capacitiveSmoothed[i], capacitiveRS[i]);
+			capacitiveDetail[i] = value - capacitiveSmoothed[i];
 
 			// Now smooth the AC component
-			smoothedDetail[i] = ewma(detailIn[i], smoothedDetail[i], rd[i]);
+			capacitiveSmoothedDetail[i] = ewma(capacitiveDetail[i], capacitiveSmoothedDetail[i], capacitiveRD[i]);
 					
 			// Check for sudden loud inputs
-			if (trigger[i].update(fabs(smoothedDetail[i]))) {
-				kerbang[i] = true;
+			if (capacitiveTrigger[i].update(fabs(capacitiveSmoothedDetail[i]))) {
+				capacitiveKerbang[i] = true;
 				OneShot& h = hits[i];
     		    h.amplitude = 1.0f;
+    		    
 	    		h.duration = uint64_t(512.0f * 2.0f * value);
 	    		h.trigger = true;
 				//rt_printf("Triggered panel %d\n", i);
 				//scope.trigger();
-
+				
+				// Also trigger sound output
+				//ADSR(uint64_t strt,uint64_t dur,float amp,
+				//uint64_t a,uint64_t d,float s,uint64_t r) 
+				ADSR adsr(t, 15000, 1.0f, 3000, 1000, 0.8f, 10000);
+				adsr.id = id_gen.generate();
+				adsr.carrier_id = i+1;
+				markEnvelopeForAdding(adsr);
+					
 			}
 				
 							
@@ -353,24 +469,34 @@ void render(BelaContext *context, void *userData)
 				/***** accelerometer is on input channels 0,1,2 ****/
 				if (ch < 3) 
 				{
-					analogIn[ch] = analogRead(context, n, ch);
+					float analogValue = analogRead(context, n, ch);
+					accIn[ch] = analogValue;
+
+					unsigned int i = ch;
+					accSmoothed[i] = ewma(analogValue, accSmoothed[i], accRS[i]);
+					accDetail[i] = analogValue - accSmoothed[i];
+
+					// Now smooth the AC component
+					accSmoothedDetail[i] = ewma(accDetail[i], accSmoothedDetail[i], accRD[i]);
+					//float gforce = sqrt(analogIn[0]*analogIn[0] + analogIn[1] * analogIn[1] + analogIn[2] * analogIn[2]);
+					
 				}
 				/**************************************************/
 				
 				
 				// Outputs
-				//if (ch < 3)
+				
 				int j = solenoidForChannel[ch];
 				if (j >= 0)
 				{
-					uint64_t t = context->audioFramesElapsed;
+					
 					if (hits[j].trigger) {
 						hits[j].start = t;
 						hits[j].trigger = false;
 					}
 
 					analogWrite(context, n, ch, hits[j].value(t));
-					//audioWrite(context, n, j, hits[j].value(t)/5.0f);
+					//analogWrite(context, n, ch, 0);
 				}
 				
 			}
@@ -379,14 +505,28 @@ void render(BelaContext *context, void *userData)
 		}
 		
 		// Audio input channels
-		float left_in = audioRead(context,frame,0);
-		float right_in = audioRead(context,frame,1);
+		//float left_in = audioRead(context,frame,0);
+		//float right_in = audioRead(context,frame,1);
 		
-		// Pass through to Output
-		audioWrite(context,frame,0,left_in);
-		audioWrite(context,frame,1,right_in);
-		scope.log(left_in,right_in);
-		
+
+		// Output
+		float left_out=0.0f; //float right_out=0.0f;
+		list<Envelope*>::iterator it;
+		for (it=envelopes.begin(); it!=envelopes.end(); it++) {
+			ADSR* env = (ADSR*) *it;
+			if (env->active(t)) {
+				Carrier* cycle = cycles[env->carrier_id];
+				left_out += env->value(t) * cycle->value(t, cycle->freq * accIn[env->carrier_id-1],1.0f);
+				//left_out += env->value(t) * sin(TWOPI * 1000.0f * ((float)t)/44100.0f);
+			}
+			
+		}
+		//SineCarrier& sc1 = cycles[3];
+		audioWrite(context,frame,0,left_out);
+		//audioWrite(context,frame,0,sin(2.0f*PI*1000.0f * ((float)t) / 44100.0f));
+		//audioWrite(context,frame,1,right_in);
+		//scope.log(left_out);
+		scope.log(accIn[0],accIn[1],accIn[2]);
 	}
 
 	
@@ -409,8 +549,8 @@ void render(BelaContext *context, void *userData)
 	// send message for this tick
 	if (tickedOff) 
 	{
-		sendLetter(bar, beat, tick, kerbang[0], kerbang[1], kerbang[2]);
-		kerbang[0] = false; kerbang[1] = false; kerbang[2] = false;
+		sendLetter(bar, beat, tick, capacitiveKerbang[0], capacitiveKerbang[1], capacitiveKerbang[2]);
+		capacitiveKerbang[0] = false; capacitiveKerbang[1] = false; capacitiveKerbang[2] = false;
 		tickedOff = false;
 	}
 
@@ -419,7 +559,9 @@ void render(BelaContext *context, void *userData)
 
 void cleanup(BelaContext *context, void *userData)
 {
-
+	delete baseFaceCarriers[0];
+	delete baseFaceCarriers[1];
+	delete baseFaceCarriers[2];
 }
 
 
