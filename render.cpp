@@ -8,6 +8,7 @@
 #include <list>
 #include <map>
 #include <utility>
+#include "AudioNode.h"
 
 ///// capacitive touch stuff///
 #include "I2C_MPR121.h"
@@ -66,6 +67,15 @@ OSCServer oscServer;
 OSCClient oscClient;
 deque<oscpkt::Message> outbox;
 //------------------------//
+
+
+//----- Audio Graph -------//
+SineGenerator* cycle1;
+ConstantGenerator* freq1;
+ConstantGenerator* amp1;
+//------------------------//
+
+
 
 Scope scope;
 
@@ -355,6 +365,15 @@ bool setup(BelaContext *context, void *userData)
 	cycles.insert(make_pair(2,baseFaceCarriers[1]));
 	cycles.insert(make_pair(3,baseFaceCarriers[2]));
 		
+	cycle1 = new SineGenerator();
+	freq1 = new ConstantGenerator(1000.0f);
+	amp1 = new ConstantGenerator(1.0f);
+	cycle1->receiveConnectionFrom(freq1,0,0);
+	cycle1->receiveConnectionFrom(amp1,0,1);
+	
+	
+	
+		
 	gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	changeTempo(120.0f, context->analogSampleRate);
 	
@@ -521,11 +540,21 @@ void render(BelaContext *context, void *userData)
 			}
 			
 		}
-		//SineCarrier& sc1 = cycles[3];
+		
+		
+		// Render the audio Graph
+		cycle1->renderGraph(frame,NULL);
+		left_out += cycle1->outputSample(0);		
+		
 		audioWrite(context,frame,0,left_out);
 		//audioWrite(context,frame,0,sin(2.0f*PI*1000.0f * ((float)t) / 44100.0f));
 		//audioWrite(context,frame,1,right_in);
 		//scope.log(left_out);
+		
+		
+		
+		
+		
 		scope.log(accIn[0],accIn[1],accIn[2]);
 	}
 
