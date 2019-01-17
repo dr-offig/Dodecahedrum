@@ -70,9 +70,10 @@ deque<oscpkt::Message> outbox;
 
 
 //----- Audio Graph -------//
-SineGenerator* cycle1;
 ConstantGenerator* freq1;
 ConstantGenerator* amp1;
+SineGenerator* cycle1;
+StereoMixer* mixer;
 //------------------------//
 
 
@@ -368,12 +369,12 @@ bool setup(BelaContext *context, void *userData)
 	cycle1 = new SineGenerator();
 	freq1 = new ConstantGenerator(1000.0f);
 	amp1 = new ConstantGenerator(1.0f);
+	mixer = new StereoMixer();
 	cycle1->receiveConnectionFrom(freq1,0,0);
 	cycle1->receiveConnectionFrom(amp1,0,1);
-	
-	
-	
-		
+	mixer->receiveConnectionFrom(cycle1,0,0);
+	mixer->setPan(0,0.0f);
+			
 	gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	changeTempo(120.0f, context->analogSampleRate);
 	
@@ -386,6 +387,9 @@ bool setup(BelaContext *context, void *userData)
 	//readIntervalSamples = context->audioSampleRate / readInterval;
 	
 	scope.setup(3,context->audioSampleRate);
+	
+	render(context,userData);
+	render(context,userData);
 	
 	return true;
 }
@@ -529,7 +533,7 @@ void render(BelaContext *context, void *userData)
 		
 
 		// Output
-		float left_out=0.0f; //float right_out=0.0f;
+		float left_out=0.0f; float right_out=0.0f;
 		list<Envelope*>::iterator it;
 		for (it=envelopes.begin(); it!=envelopes.end(); it++) {
 			ADSR* env = (ADSR*) *it;
@@ -543,17 +547,15 @@ void render(BelaContext *context, void *userData)
 		
 		
 		// Render the audio Graph
-		cycle1->renderGraph(frame,NULL);
-		left_out += cycle1->outputSample(0);		
+		mixer->renderGraph(frame,NULL);
+		left_out += mixer->outputSample(0);
+		right_out += mixer->outputSample(1);
 		
 		audioWrite(context,frame,0,left_out);
+		audioWrite(context,frame,1,right_out);
 		//audioWrite(context,frame,0,sin(2.0f*PI*1000.0f * ((float)t) / 44100.0f));
 		//audioWrite(context,frame,1,right_in);
 		//scope.log(left_out);
-		
-		
-		
-		
 		
 		scope.log(accIn[0],accIn[1],accIn[2]);
 	}
