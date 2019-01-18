@@ -9,6 +9,7 @@
 #include <map>
 #include <utility>
 #include "AudioNode.h"
+#include "Tonality.h"
 
 ///// capacitive touch stuff///
 #include "I2C_MPR121.h"
@@ -17,6 +18,8 @@
 // Define this to print data to terminal
 #undef DEBUG_MPR121
 //////////////////////////////
+
+#define NUM_ANALOG_SENSORS 3
 
 #define ENV_INFO_BUF_SIZE 16
 
@@ -28,7 +31,8 @@ using namespace std;
 // Change this threshold to set the minimum amount of touch
 int threshold = 40;
 // This array holds the continuous sensor values
-int sensorValue[NUM_TOUCH_PINS];
+int capacitiveSensorValue[NUM_TOUCH_PINS];
+float *analogSensorValues;
 I2C_MPR121 mpr121;			// Object to handle MPR121 sensing
 AuxiliaryTask i2cTask;		// Auxiliary task to read I2C
 //int readCount = 0;			// How long until we read again...
@@ -61,8 +65,8 @@ int solenoidForChannel[8] = { 0, -1, 1, 2, -1, -1, -1, -1};
 AuxiliaryTask oscServerTask;
 AuxiliaryTask oscClientTask;
 AuxiliaryTask playTask;
-AuxiliaryTask createEnvelopesTask;
-AuxiliaryTask cleanupInactiveEnvelopesTask;
+//AuxiliaryTask createEnvelopesTask;
+//AuxiliaryTask cleanupInactiveEnvelopesTask;
 OSCServer oscServer;
 OSCClient oscClient;
 deque<oscpkt::Message> outbox;
@@ -70,55 +74,40 @@ deque<oscpkt::Message> outbox;
 
 
 //----- Audio Graph -------//
-ConstantGenerator* freq1;
-ConstantGenerator* amp1;
-SineGenerator* cycle1;
+ExternalAudioSource* audioInNode;
+SensorInput* sensors;
+ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
+//ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
+ConstantGenerator* freq[NUM_TOUCH_PINS];
+//SineGenerator* lfo[NUM_TOUCH_PINS];
+ConstantGenerator* affineGain;
+Affine* affine[NUM_TOUCH_PINS];
+//ConstantGenerator* amp[NUM_TOUCH_PINS];
+SineGenerator* cycle[NUM_TOUCH_PINS];
 StereoMixer* mixer;
 //------------------------//
 
-
+//------- Tonality -------//
+Scale scale = MajorPentatonic(PitchClass(0));
 
 Scope scope;
-
 int localPort = 8000;
-
 OneShot hits[3];
 
+
+/******************** Old Envelope Stuff ***********************
 map<uint32_t,Carrier*>cycles;
 Carrier* baseFaceCarriers[NUM_TOUCH_PINS];
-
 list<Envelope*>envelopes;
-//float cyc_freqs[3] = { 500.0f, 1000.0f, 2000.0f };
-//float cyc_amps[3] = { 1.0f, 1.0f, 1.0f };
-
 UniqueID id_gen(NUM_TOUCH_PINS);
-
-// uint32_t addEnvelope(uint64_t start_time,SID id,SID carrier_id) {
-// 	Envelope* env = new Envelope(start_time);
-// 	env->id = id;
-// 	env->carrier_id = carrier_id;
-// 	envelopes.push_back(env);
-// 	printf("Added Envelope. Start: %lld  id: %lld  carrier: %lld\n",env->start,env->id,env->carrier_id);
-// 	return envelopes.size();
-// }
-
 
 uint32_t addEnvelope(const ADSR& adsr) {
 	ADSR* env = new ADSR(adsr);
-	//env->start = adsr.start;
-	// env->duration = adsr.duration;
-	// env->id = adsr.id;
-	// env->carrier_id = adsr.carrier_id;
-	// env->attack = adsr.attack;
-	// env->decay = adsr.decay;
-	// env->sustain = adsr.sustain;
-	// env->release = adsr.release;
 	envelopes.push_back(env);
 	//printf("Added Envelope. Start: %lld  duration: %lld  id: %lld  carrier: %lld  attack: %lld  decay: %lld  sustain: %1.2f  release: %lld\n",
 				//env->start,env->duration,env->id,env->carrier_id,env->attack,env->decay,env->sustain,env->release);
 	return envelopes.size();
 }
-
 
 ADSR toBeAdded[ENV_INFO_BUF_SIZE];
 uint32_t toBeAddedIndex = 0;
@@ -162,7 +151,7 @@ void cleanupInactiveEnvelopes(void *clientData)
 	}
 	return;
 }
-
+****************************************************************/
 
 
 
@@ -332,12 +321,12 @@ void playNotes(void *clientData)
 void readMPR121(void*)
 {
 	for(int i = 0; i < NUM_TOUCH_PINS; i++) {
-		sensorValue[i] = -(mpr121.filteredData(i) - mpr121.baselineData(i));
-		sensorValue[i] -= threshold;
-		if(sensorValue[i] < 0)
-			sensorValue[i] = 0;
+		capacitiveSensorValue[i] = -(mpr121.filteredData(i) - mpr121.baselineData(i));
+		capacitiveSensorValue[i] -= threshold;
+		if(capacitiveSensorValue[i] < 0)
+			capacitiveSensorValue[i] = 0;
 #ifdef DEBUG_MPR121
-		rt_printf("%d ", sensorValue[i]);
+		rt_printf("%d ", capacitiveSensorValue[i]);
 #endif
 	}
 #ifdef DEBUG_MPR121
@@ -356,25 +345,38 @@ bool setup(BelaContext *context, void *userData)
 	oscServerTask = Bela_createAuxiliaryTask(receiveOSC, BELA_AUDIO_PRIORITY - 30, "receive-osc", NULL);
 	oscClientTask = Bela_createAuxiliaryTask(sendOSC, BELA_AUDIO_PRIORITY - 20, "send-osc", NULL);
 	playTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 10,"play", NULL);
-	createEnvelopesTask = Bela_createAuxiliaryTask(addEnvelopes, BELA_AUDIO_PRIORITY - 40,"add-envelopes", NULL);
-	cleanupInactiveEnvelopesTask = Bela_createAuxiliaryTask(cleanupInactiveEnvelopes, BELA_AUDIO_PRIORITY - 50,"cleanup-envelopes", context);
+	//createEnvelopesTask = Bela_createAuxiliaryTask(addEnvelopes, BELA_AUDIO_PRIORITY - 40,"add-envelopes", NULL);
+	//cleanupInactiveEnvelopesTask = Bela_createAuxiliaryTask(cleanupInactiveEnvelopes, BELA_AUDIO_PRIORITY - 50,"cleanup-envelopes", context);
 	
-	baseFaceCarriers[0] = new SawWave(1,5000.0f,1.0f);
-	baseFaceCarriers[1] = new SawWave(2,7500.0f,1.0f);
-	baseFaceCarriers[2] = new SawWave(3,10000.0f,1.0f);
-	cycles.insert(make_pair(1,baseFaceCarriers[0]));
-	cycles.insert(make_pair(2,baseFaceCarriers[1]));
-	cycles.insert(make_pair(3,baseFaceCarriers[2]));
-		
-	cycle1 = new SineGenerator();
-	freq1 = new ConstantGenerator(1000.0f);
-	amp1 = new ConstantGenerator(1.0f);
-	mixer = new StereoMixer();
-	cycle1->receiveConnectionFrom(freq1,0,0);
-	cycle1->receiveConnectionFrom(amp1,0,1);
-	mixer->receiveConnectionFrom(cycle1,0,0);
-	mixer->setPan(0,0.0f);
-			
+	// baseFaceCarriers[0] = new SawWave(1,5000.0f,1.0f);
+	// baseFaceCarriers[1] = new SawWave(2,7500.0f,1.0f);
+	// baseFaceCarriers[2] = new SawWave(3,10000.0f,1.0f);
+	// cycles.insert(make_pair(1,baseFaceCarriers[0]));
+	// cycles.insert(make_pair(2,baseFaceCarriers[1]));
+	// cycles.insert(make_pair(3,baseFaceCarriers[2]));
+	
+	analogSensorValues = (float*)malloc(sizeof(float) * context->analogInChannels);
+	audioInNode = new ExternalAudioSource();
+	affineGain = new ConstantGenerator(1000.0f);
+	sensors = new SensorInput(context->analogInChannels);
+	mixer = new StereoMixer(NUM_TOUCH_PINS);	
+	for (u64 j=0; j<NUM_TOUCH_PINS; j++) { // u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amplitude
+		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 10000, 0, 20000, 1.0f);
+		cycle[j] = new SineGenerator();
+		affine[j] = new Affine();
+		//lfo[j] = new SineGenerator();
+		freq[j] = new ConstantGenerator(mtof(scale.pitch(j,6)));
+		//lfo_freq[j] = new ConstantGenerator(10.0f);
+		//cycle[j]->receiveConnectionFrom(freq[j],0,0);
+		affine[j]->receiveConnectionFrom(freq[j],0,0);
+		affine[j]->receiveConnectionFrom(sensors,0,1);
+		affine[j]->receiveConnectionFrom(affineGain,0,2);
+		cycle[j]->receiveConnectionFrom(affine[j],0,0);
+		cycle[j]->receiveConnectionFrom(env[j],0,1);
+		//cycle[j]->receiveConnectionFrom(audioInNode,0,1);
+		mixer->receiveConnectionFrom(cycle[j],0,j);
+		mixer->setPan(j,0.0f);
+	}		
 	gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	changeTempo(120.0f, context->analogSampleRate);
 	
@@ -388,8 +390,10 @@ bool setup(BelaContext *context, void *userData)
 	
 	scope.setup(3,context->audioSampleRate);
 	
-	render(context,userData);
-	render(context,userData);
+	// render(context,userData);
+	// render(context,userData);
+	printf("Scale: %d %d %d %d %d %d %d\n", scale.pitch(0,5), scale.pitch(1,5), scale.pitch(2,5), scale.pitch(3,5),
+											scale.pitch(4,5), scale.pitch(5,5), scale.pitch(6,5));
 	
 	return true;
 }
@@ -400,8 +404,8 @@ void render(BelaContext *context, void *userData)
 	Bela_scheduleAuxiliaryTask(oscClientTask);
 	Bela_scheduleAuxiliaryTask(playTask);
 	Bela_scheduleAuxiliaryTask(i2cTask);
-	Bela_scheduleAuxiliaryTask(createEnvelopesTask);
-	Bela_scheduleAuxiliaryTask(cleanupInactiveEnvelopesTask);
+	// Bela_scheduleAuxiliaryTask(createEnvelopesTask);
+	// Bela_scheduleAuxiliaryTask(cleanupInactiveEnvelopesTask);
 	
 	for (unsigned int frame = 0; frame < context->audioFrames; ++frame)
 	{
@@ -410,7 +414,7 @@ void render(BelaContext *context, void *userData)
 		// Capacitive Sensing
 		//float amps[NUM_TOUCH_PINS] = {0.0f, 0.0f, 0.0f};
 		for(int i = 0; i < NUM_TOUCH_PINS; i++) {
-			float value = sensorValue[i] / 400.f;
+			float value = capacitiveSensorValue[i] / 400.f;
 			capacitiveIn[i] = value;
 					
 			// Exponential filter bank (separates DC from AC)
@@ -432,13 +436,11 @@ void render(BelaContext *context, void *userData)
 				//scope.trigger();
 				
 				// Also trigger sound output
-				//ADSR(uint64_t strt,uint64_t dur,float amp,
-				//uint64_t a,uint64_t d,float s,uint64_t r) 
-				ADSR adsr(t, 15000, 1.0f, 3000, 1000, 0.8f, 10000);
-				adsr.id = id_gen.generate();
-				adsr.carrier_id = i+1;
-				markEnvelopeForAdding(adsr);
-					
+				// ADSR adsr(t, 15000, 1.0f, 3000, 1000, 0.8f, 10000);
+				// adsr.id = id_gen.generate();
+				// adsr.carrier_id = i+1;
+				// markEnvelopeForAdding(adsr);
+				env[i]->retrigger(t, 10.0f * value);
 			}
 				
 							
@@ -493,14 +495,17 @@ void render(BelaContext *context, void *userData)
 				if (ch < 3) 
 				{
 					float analogValue = analogRead(context, n, ch);
-					accIn[ch] = analogValue;
-
+					
 					unsigned int i = ch;
-					accSmoothed[i] = ewma(analogValue, accSmoothed[i], accRS[i]);
-					accDetail[i] = analogValue - accSmoothed[i];
+					accIn[i] = analogValue;
+					
+					// accSmoothed[i] = ewma(analogValue, accSmoothed[i], accRS[i]);
+					// accDetail[i] = analogValue - accSmoothed[i];
 
-					// Now smooth the AC component
-					accSmoothedDetail[i] = ewma(accDetail[i], accSmoothedDetail[i], accRD[i]);
+					// // Now smooth the AC component
+					// accSmoothedDetail[i] = ewma(accDetail[i], accSmoothedDetail[i], accRD[i]);
+					
+					analogSensorValues[i] = accIn[i];
 					//float gforce = sqrt(analogIn[0]*analogIn[0] + analogIn[1] * analogIn[1] + analogIn[2] * analogIn[2]);
 					
 				}
@@ -523,41 +528,44 @@ void render(BelaContext *context, void *userData)
 				}
 				
 			}
-		
+			
+			sensors->updateBufferFromSource(analogSensorValues,context->analogInChannels);
 			//scope.log(analogIn[0],analogIn[1],analogIn[2]);
 		}
 		
 		// Audio input channels
-		//float left_in = audioRead(context,frame,0);
-		//float right_in = audioRead(context,frame,1);
-		
+		float inputData[2];
+		inputData[0] = audioRead(context,frame,0);
+		inputData[1] = audioRead(context,frame,1);
+		audioInNode->updateBufferFromSource(inputData,2);
 
 		// Output
 		float left_out=0.0f; float right_out=0.0f;
-		list<Envelope*>::iterator it;
-		for (it=envelopes.begin(); it!=envelopes.end(); it++) {
-			ADSR* env = (ADSR*) *it;
-			if (env->active(t)) {
-				Carrier* cycle = cycles[env->carrier_id];
-				left_out += env->value(t) * cycle->value(t, cycle->freq * accIn[env->carrier_id-1],1.0f);
-				//left_out += env->value(t) * sin(TWOPI * 1000.0f * ((float)t)/44100.0f);
-			}
+		
+		// list<Envelope*>::iterator it;
+		// for (it=envelopes.begin(); it!=envelopes.end(); it++) {
+		// 	ADSR* env = (ADSR*) *it;
+		// 	if (env->active(t)) {
+		// 		Carrier* cycle = cycles[env->carrier_id];
+		// 		left_out += env->value(t) * cycle->value(t, cycle->freq * accIn[env->carrier_id-1],1.0f);
+		// 		//left_out += env->value(t) * sin(TWOPI * 1000.0f * ((float)t)/44100.0f);
+		// 	}
 			
-		}
+		// }
+		
 		
 		
 		// Render the audio Graph
-		mixer->renderGraph(frame,NULL);
+		mixer->renderGraph(t,NULL);
 		left_out += mixer->outputSample(0);
 		right_out += mixer->outputSample(1);
 		
 		audioWrite(context,frame,0,left_out);
 		audioWrite(context,frame,1,right_out);
-		//audioWrite(context,frame,0,sin(2.0f*PI*1000.0f * ((float)t) / 44100.0f));
-		//audioWrite(context,frame,1,right_in);
-		//scope.log(left_out);
 		
-		scope.log(accIn[0],accIn[1],accIn[2]);
+		float ff = affine[0]->outputSample(0);
+		scope.log(ff/1000.0f,0.0,0.0);
+		//scope.log(left_out,inputData[0],inputData[1]);
 	}
 
 	
@@ -590,9 +598,19 @@ void render(BelaContext *context, void *userData)
 
 void cleanup(BelaContext *context, void *userData)
 {
-	delete baseFaceCarriers[0];
-	delete baseFaceCarriers[1];
-	delete baseFaceCarriers[2];
+	delete(mixer);
+	delete(audioInNode);
+	for (unsigned j=0; j<NUM_TOUCH_PINS; j++) {
+		delete(freq[j]);
+		delete(cycle[j]);
+		delete(env[j]);
+	}
+	
+	free(analogSensorValues);
+	//delete baseFaceCarriers[0];
+	//delete baseFaceCarriers[1];
+	//delete baseFaceCarriers[2];
+	
 }
 
 

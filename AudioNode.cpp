@@ -127,9 +127,21 @@ void SineGenerator::processFrame(u64 frame, void* clientData)
 	float& amp = _inputBuffer[1];
 	
 	_phase += double(freq) / _sampleRate;
-	_outputBuffer[0] = amp * sin(TWOPI * _phase);
+	_outputBuffer[0] = fabs(amp) * float(sin(TWOPI * _phase));
 	return;
 }
+
+
+void SawGenerator::processFrame(u64 frame, void* clientData)
+{
+	float& freq = _inputBuffer[0];
+	float& amp = _inputBuffer[1];
+	
+	_phase += double(freq) / _sampleRate;
+	_outputBuffer[0] = fabs(amp) * float(_phase);
+	return;
+}
+
 
 
 void ConstantGenerator::processFrame(u64 frame, void* clientData)
@@ -139,15 +151,82 @@ void ConstantGenerator::processFrame(u64 frame, void* clientData)
 }
 
 
-ADSREnvelopeGenerator::ADSREnvelopeGenerator(u64 a, u64 d, float s, u64 r, u64 st, u64 dur)
-	: AudioNode(0,1), attack(a), decay(d), sustain(s), release(r) , start_time(st), duration(dur) {}
+ADSREnvelopeGenerator::ADSREnvelopeGenerator(u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amp)
+	: AudioNode(0,1), attack(a), decay(d), sustain(s), release(r) , start_time(st), duration(dur), amplitude(amp),
+		_crossFading(false), _crossFadeDuration(100), _crossFadeTime(0), _holdValue(0.0f) 
+	{}
 
 
 ADSREnvelopeGenerator::ADSREnvelopeGenerator(const ADSREnvelopeGenerator& adsr)
-	: AudioNode(adsr), attack(adsr.attack), decay(adsr.decay), 
-		sustain(adsr.sustain), release(adsr.release), 
-		start_time(adsr.start_time), duration(adsr.duration) {}
+	: AudioNode(adsr), attack(adsr.attack), decay(adsr.decay), sustain(adsr.sustain), release(adsr.release), 
+		start_time(adsr.start_time), duration(adsr.duration), amplitude(adsr.amplitude),
+		_crossFading(false), _crossFadeDuration(adsr._crossFadeDuration), _crossFadeTime(0), _holdValue(0.0f) 
+	{}
 
+
+bool ADSREnvelopeGenerator::active(u64 frame)
+{
+	return (start_time <= frame && frame < start_time + duration + release);	
+}
+
+
+void ADSREnvelopeGenerator::processFrame(u64 frame, void* clientData)
+{
+	float val = 0.0f;
+	if (active(frame)) {
+		u64 elapsed = frame - start_time;
+		if (elapsed < attack)
+		{
+			val = float(elapsed) / float(attack);
+		} else if (elapsed < attack + decay) {
+			float t = float(elapsed - attack) / float(decay);
+			val = t*sustain + (1.0f - t);
+		} else if (elapsed < duration) {
+			val = sustain;
+		} else if (elapsed < duration + release) {
+			float t = float(elapsed - duration) / float(release);
+			val = (1.0f - t)*sustain;			
+		} else {
+			val = 0.0f;
+		}
+	}
+	val *= amplitude;
+		
+	if (_crossFading) {
+		float t = float(_crossFadeTime) / float(_crossFadeDuration);
+		val = val * t + _holdValue * (1.0f - t);
+		if (++_crossFadeTime > _crossFadeDuration) {
+			_crossFading = false;
+		}
+	}
+	
+	_outputBuffer[0] = val;
+}
+
+
+void ADSREnvelopeGenerator::retrigger(u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amp) {
+	_crossFading = true;
+	_crossFadeTime = 0;
+	_holdValue = _outputBuffer[0];
+	attack = a; decay = d; sustain = s; release = r; start_time = st; duration = dur; amplitude = amp;
+}
+
+
+void ADSREnvelopeGenerator::retrigger(u64 st, float amp) {
+	_crossFading = true;
+	_crossFadeTime = 0;
+	_holdValue = _outputBuffer[0];
+	start_time = st;
+	amplitude = amp;
+}
+
+
+void ADSREnvelopeGenerator::retrigger(u64 st) {
+	_crossFading = true;
+	_crossFadeTime = 0;
+	_holdValue = _outputBuffer[0];
+	start_time = st;
+}
 
 
 
@@ -162,6 +241,18 @@ StereoMixer::StereoMixer() : AudioNode(2,2), _c(sqrt(2.0)/2.0), _pan(NULL), _a(N
 	
 	// Now call the overloaded initialiser
 	setNumInputChannels(2);
+}
+
+
+StereoMixer::StereoMixer(u64 numInputChannels) : AudioNode(numInputChannels,2), _c(sqrt(2.0)/2.0), _pan(NULL), _a(NULL), _b(NULL)
+{ 
+	// This is a bit of a hack, needed since the parent class has 
+	// initialised some input channels, and we want to call the overloaded
+	// initialisation assuming 0 pre-existing channels
+	_inputChannels = 0;
+	
+	// Now call the overloaded initialiser
+	setNumInputChannels(numInputChannels);
 }
 
 
@@ -209,6 +300,8 @@ void StereoMixer::setPan(u64 channel, float value)
 
 void StereoMixer::processFrame(u64 frame, void* clientData)
 {
+	_outputBuffer[0] = 0.0f;
+	_outputBuffer[1] = 0.0f;
 	for (u64 j = 0; j < _inputChannels; j++) {
 		_outputBuffer[0] += _inputBuffer[j] * _a[j];
 		_outputBuffer[1] += _inputBuffer[j] * _b[j];
@@ -241,6 +334,13 @@ void Adder::processFrame(u64 frame, void* clientData)
 }
 
 
+void Affine::processFrame(u64 frame, void* clientData)
+{
+	_outputBuffer[0] = _inputBuffer[0] + _inputBuffer[1] * _inputBuffer[2];
+}
+
+
+
 
 /************* Routing **************/
 
@@ -250,3 +350,25 @@ void Splitter::processFrame(u64 frame, void* clientData)
 		_outputBuffer[j] = _inputBuffer[0];
 	}
 }
+
+
+
+/************ Audio Input ************/
+
+void ExternalAudioSource::updateBufferFromSource(float* inData, u64 inChans)
+{
+	for (u64 j=0; j<inChans; j++) {
+		_outputBuffer[j] = inData[j];
+	}
+}
+
+
+void SensorInput::updateBufferFromSource(float* inData, u64 inChans)
+{
+	for (u64 j=0; j<inChans; j++) {
+		_outputBuffer[j] = inData[j];
+	}
+}
+
+
+
