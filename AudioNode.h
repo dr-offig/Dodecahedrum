@@ -194,6 +194,17 @@ public:
 };
 
 
+class Vibrator : public AudioNode
+{
+public:
+	Vibrator() : AudioNode(2,1) {}
+	virtual ~Vibrator() {}
+	Vibrator(const Vibrator& af) : AudioNode(af) {}
+	
+	virtual void processFrame(u64 frame, void* clientData);
+};
+
+
 class Splitter : public AudioNode
 {
 public:

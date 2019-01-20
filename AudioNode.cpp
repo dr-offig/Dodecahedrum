@@ -340,6 +340,11 @@ void Affine::processFrame(u64 frame, void* clientData)
 }
 
 
+void Vibrator::processFrame(u64 frame, void* clientData)
+{
+	_outputBuffer[0] = _inputBuffer[0] * (1.0f + _inputBuffer[1]);
+}
+
 
 
 /************* Routing **************/

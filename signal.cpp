@@ -19,6 +19,16 @@ float z_score(float mu, float sigma)
 }
 
 
+float lerp(float x, float a1, float b1, float a2, float b2)
+{
+	if (a1 == b1) {
+		return a2;
+	} else {
+		return ((((b2 - a2) / (b1 - a1)) * (x - a1)) + a2);
+	}
+}
+
+
 bool Schottky::update(float value)
 {
 	if (triggered) {

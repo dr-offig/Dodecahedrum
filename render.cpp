@@ -73,19 +73,7 @@ deque<oscpkt::Message> outbox;
 //------------------------//
 
 
-//----- Audio Graph -------//
-ExternalAudioSource* audioInNode;
-SensorInput* sensors;
-ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
-//ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
-ConstantGenerator* freq[NUM_TOUCH_PINS];
-//SineGenerator* lfo[NUM_TOUCH_PINS];
-ConstantGenerator* affineGain;
-Affine* affine[NUM_TOUCH_PINS];
-//ConstantGenerator* amp[NUM_TOUCH_PINS];
-SineGenerator* cycle[NUM_TOUCH_PINS];
-StereoMixer* mixer;
-//------------------------//
+
 
 //------- Tonality -------//
 Scale scale = MajorPentatonic(PitchClass(0));
@@ -339,6 +327,21 @@ void readMPR121(void*)
 
 
 
+//----- Audio Graph -------//
+ExternalAudioSource* audioInNode;
+SensorInput* sensors;
+SensorInput* joltFactor;
+ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
+ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
+ConstantGenerator* lfo_amp[NUM_TOUCH_PINS];
+ConstantGenerator* freq[NUM_TOUCH_PINS];
+ConstantGenerator* amp[NUM_TOUCH_PINS];
+SineGenerator* lfo[NUM_TOUCH_PINS];
+Vibrator* vibrator[NUM_TOUCH_PINS];
+SineGenerator* cycle[NUM_TOUCH_PINS];
+StereoMixer* mixer;
+//------------------------//
+
 bool setup(BelaContext *context, void *userData)
 {
 	oscServer.setup(localPort);
@@ -357,21 +360,26 @@ bool setup(BelaContext *context, void *userData)
 	
 	analogSensorValues = (float*)malloc(sizeof(float) * context->analogInChannels);
 	audioInNode = new ExternalAudioSource();
-	affineGain = new ConstantGenerator(1000.0f);
+	//affineGain = new ConstantGenerator(1000.0f);
 	sensors = new SensorInput(context->analogInChannels);
+	joltFactor = new SensorInput();
 	mixer = new StereoMixer(NUM_TOUCH_PINS);	
 	for (u64 j=0; j<NUM_TOUCH_PINS; j++) { // u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amplitude
 		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 10000, 0, 20000, 1.0f);
 		cycle[j] = new SineGenerator();
-		affine[j] = new Affine();
-		//lfo[j] = new SineGenerator();
+		vibrator[j] = new Vibrator();
+		lfo[j] = new SineGenerator();
 		freq[j] = new ConstantGenerator(mtof(scale.pitch(j,6)));
-		//lfo_freq[j] = new ConstantGenerator(10.0f);
+		lfo_freq[j] = new ConstantGenerator(10.0f);
+		lfo_amp[j] = new ConstantGenerator(0.5f);
+		lfo[j]->receiveConnectionFrom(lfo_freq[j],0,0);
+		lfo[j]->receiveConnectionFrom(joltFactor,0,1);
+		
+		vibrator[j]->receiveConnectionFrom(freq[j],0,0);
+		vibrator[j]->receiveConnectionFrom(lfo[j],0,1);
+				
 		//cycle[j]->receiveConnectionFrom(freq[j],0,0);
-		affine[j]->receiveConnectionFrom(freq[j],0,0);
-		affine[j]->receiveConnectionFrom(sensors,0,1);
-		affine[j]->receiveConnectionFrom(affineGain,0,2);
-		cycle[j]->receiveConnectionFrom(affine[j],0,0);
+		cycle[j]->receiveConnectionFrom(vibrator[j],0,0);
 		cycle[j]->receiveConnectionFrom(env[j],0,1);
 		//cycle[j]->receiveConnectionFrom(audioInNode,0,1);
 		mixer->receiveConnectionFrom(cycle[j],0,j);
@@ -410,6 +418,7 @@ void render(BelaContext *context, void *userData)
 	for (unsigned int frame = 0; frame < context->audioFrames; ++frame)
 	{
 		uint64_t t = context->audioFramesElapsed + frame;
+		float jolt = 0.0f;
 		
 		// Capacitive Sensing
 		//float amps[NUM_TOUCH_PINS] = {0.0f, 0.0f, 0.0f};
@@ -497,7 +506,7 @@ void render(BelaContext *context, void *userData)
 					float analogValue = analogRead(context, n, ch);
 					
 					unsigned int i = ch;
-					accIn[i] = analogValue;
+					accIn[i] = lerp(analogValue, 0.30f, 0.49f, -1.0f, 1.0f); 
 					
 					// accSmoothed[i] = ewma(analogValue, accSmoothed[i], accRS[i]);
 					// accDetail[i] = analogValue - accSmoothed[i];
@@ -505,7 +514,9 @@ void render(BelaContext *context, void *userData)
 					// // Now smooth the AC component
 					// accSmoothedDetail[i] = ewma(accDetail[i], accSmoothedDetail[i], accRD[i]);
 					
+					//analogSensorValues[i] = analogValue;
 					analogSensorValues[i] = accIn[i];
+					jolt += accIn[i] * accIn[i];
 					//float gforce = sqrt(analogIn[0]*analogIn[0] + analogIn[1] * analogIn[1] + analogIn[2] * analogIn[2]);
 					
 				}
@@ -530,7 +541,11 @@ void render(BelaContext *context, void *userData)
 			}
 			
 			sensors->updateBufferFromSource(analogSensorValues,context->analogInChannels);
-			//scope.log(analogIn[0],analogIn[1],analogIn[2]);
+			//scope.log(analogSensorValues[0],analogSensorValues[1],analogSensorValues[2]);
+			
+			jolt = 0.1f * sqrtf(jolt);
+			joltFactor->updateBufferFromSource(&jolt,1);
+			scope.log(jolt, 0.0f, 0.0f);
 		}
 		
 		// Audio input channels
@@ -563,8 +578,8 @@ void render(BelaContext *context, void *userData)
 		audioWrite(context,frame,0,left_out);
 		audioWrite(context,frame,1,right_out);
 		
-		float ff = affine[0]->outputSample(0);
-		scope.log(ff/1000.0f,0.0,0.0);
+		//float ff = vibrator[0]->outputSample(0);
+		//scope.log(ff/1000.0f,0.0,0.0);
 		//scope.log(left_out,inputData[0],inputData[1]);
 	}
 

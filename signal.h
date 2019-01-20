@@ -23,6 +23,8 @@ private:
 
 float ewma(float x, float s, float a);
 float z_score(float mu, float sigma);
+float lerp(float x, float a1, float a2, float b1, float b2);
+
 
 class Schottky
 {
