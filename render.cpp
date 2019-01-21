@@ -331,7 +331,8 @@ void readMPR121(void*)
 ExternalAudioSource* audioInNode;
 SensorInput* sensors;
 //SensorInput* joltFactor;
-FIRFilter* highpass;
+FIRFilter* filter;
+//DelayLine* delay;
 ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
 ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
 ConstantGenerator* lfo_amp[NUM_TOUCH_PINS];
@@ -363,8 +364,12 @@ bool setup(BelaContext *context, void *userData)
 	audioInNode = new ExternalAudioSource();
 	//affineGain = new ConstantGenerator(1000.0f);
 	sensors = new SensorInput(context->analogInChannels);
+	//delay = new DelayLine(320);
 	//joltFactor = new SensorInput();
-	highpass = new FIRFilter(8); highpass->setTap(0,1.0f); highpass->setTap(7,-1.0f);
+	filter = new FIRFilter(8); filter->setTap(0,10.0f); filter->setTap(7,-10.0f);
+	//for (unsigned k=0;k<16;k++)
+	//	filter->setTap(k,0.0625f);
+	filter->receiveConnectionFrom(sensors,0,0);
 	mixer = new StereoMixer(NUM_TOUCH_PINS);	
 	for (u64 j=0; j<NUM_TOUCH_PINS; j++) { // u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amplitude
 		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 10000, 0, 20000, 1.0f);
@@ -375,9 +380,7 @@ bool setup(BelaContext *context, void *userData)
 		lfo_freq[j] = new ConstantGenerator(10.0f);
 		lfo_amp[j] = new ConstantGenerator(0.5f);
 		lfo[j]->receiveConnectionFrom(lfo_freq[j],0,0);
-		highpass->receiveConnectionFrom(sensors,0,0);
-		lfo[j]->receiveConnectionFrom(highpass,0,1);
-		
+		lfo[j]->receiveConnectionFrom(filter,0,1);
 		vibrator[j]->receiveConnectionFrom(freq[j],0,0);
 		vibrator[j]->receiveConnectionFrom(lfo[j],0,1);
 				
@@ -387,7 +390,8 @@ bool setup(BelaContext *context, void *userData)
 		//cycle[j]->receiveConnectionFrom(audioInNode,0,1);
 		mixer->receiveConnectionFrom(cycle[j],0,j);
 		mixer->setPan(j,0.0f);
-	}		
+	}	
+	
 	gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	changeTempo(120.0f, context->analogSampleRate);
 	
@@ -399,7 +403,7 @@ bool setup(BelaContext *context, void *userData)
 	i2cTask = Bela_createAuxiliaryTask(readMPR121, BELA_AUDIO_PRIORITY - 15, "bela-mpr121");
 	//readIntervalSamples = context->audioSampleRate / readInterval;
 	
-	scope.setup(3,context->audioSampleRate);
+	scope.setup(2,context->audioSampleRate);
 	
 	// render(context,userData);
 	// render(context,userData);
@@ -548,7 +552,7 @@ void render(BelaContext *context, void *userData)
 			
 			//jolt = 0.1f * sqrtf(jolt);
 			//joltFactor->updateBufferFromSource(&jolt,1);
-			scope.log(sensors->outputSample(0), highpass->outputSample(0), 0.0f);
+		
 		}
 		
 		// Audio input channels
@@ -584,6 +588,7 @@ void render(BelaContext *context, void *userData)
 		//float ff = vibrator[0]->outputSample(0);
 		//scope.log(ff/1000.0f,0.0,0.0);
 		//scope.log(left_out,inputData[0],inputData[1]);
+		scope.log(sensors->outputSample(0), filter->outputSample(0));
 	}
 
 	

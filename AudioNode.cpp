@@ -266,7 +266,7 @@ void FIRFilter::processFrame(u64 frame, void* clientData)
 {
 	_outputBuffer[0] = 0.0f;
 	for (unsigned j = 0; j < _order; j++)
-		_outputBuffer[j] += _pipeline[j] * _filterCoefficients[j];
+		_outputBuffer[0] += _pipeline[j] * _filterCoefficients[j];
 		
 	_pipeline.add(_inputBuffer[0]);
 }
@@ -276,8 +276,19 @@ void FIRFilter::setTap(unsigned t, float h)
 {
 	if (t < _order)
 		_filterCoefficients[t] = h;
+	
+	printf("Set filter tap %d to %1.2f\t",t,h);
+	this->print();
 }
 
+
+void FIRFilter::print()
+{
+	printf("[ ");
+	for (unsigned j = 0; j < _order; j++)
+		printf("%1.2f ", _filterCoefficients[j]);
+	printf("]\n");
+}
 
 /*
 import numpy as np

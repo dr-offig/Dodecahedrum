@@ -246,7 +246,8 @@ public:
 	
 	virtual void processFrame(u64 frame, void* clientData);
 	void setTap(unsigned t, float h);
-
+	void print();
+	
 private:
 	ShiftingPool<float> _pipeline;
 	float* _filterCoefficients;
