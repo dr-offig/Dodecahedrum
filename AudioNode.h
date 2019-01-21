@@ -57,6 +57,8 @@ public:
 	void receiveConnectionFrom(AudioNode* fromNode, u64 fromChannel, u64 toChannel);
 	void removeConnection(u64 toChannel);
 	void setDefaultInput(u64 inChannel,float value);
+	virtual void initDefaults();
+	//virtual float defaultFor(u64 chan) { printf("Setting AudioNode default on channel %lld to 0.0f\n", chan); return 0.0f; }
 	
 protected:
 	float* _inputBuffer;
@@ -72,11 +74,12 @@ protected:
 class SineGenerator : public AudioNode
 {
 public:
-	SineGenerator() : AudioNode(2,1), _phase(0.0), _sampleRate(44100.0) {}
+	SineGenerator() : AudioNode(2,1), _phase(0.0), _sampleRate(44100.0) { initDefaults(); }
 	virtual ~SineGenerator() {}
-	SineGenerator(const SineGenerator& sg) : AudioNode(sg), _phase(sg._phase), _sampleRate(sg._sampleRate) {}
+	SineGenerator(const SineGenerator& sg) : AudioNode(sg), _phase(sg._phase), _sampleRate(sg._sampleRate) { initDefaults(); }
 	
 	virtual void processFrame(u64 frame, void* clientData);
+	virtual void initDefaults();
 	
 private:
 	double _phase;
@@ -87,12 +90,13 @@ private:
 class SawGenerator : public AudioNode
 {
 public:
-	SawGenerator() : AudioNode(2,1), _phase(0.0), _sampleRate(44100.0) {}
+	SawGenerator() : AudioNode(2,1), _phase(0.0), _sampleRate(44100.0) { initDefaults(); }
 	virtual ~SawGenerator() {}
-	SawGenerator(const SawGenerator& sg) : AudioNode(sg), _phase(sg._phase), _sampleRate(sg._sampleRate) {}
+	SawGenerator(const SawGenerator& sg) : AudioNode(sg), _phase(sg._phase), _sampleRate(sg._sampleRate) { initDefaults(); }
 	
 	virtual void processFrame(u64 frame, void* clientData);
-	
+	virtual void initDefaults();
+
 private:
 	double _phase;
 	double _sampleRate;
@@ -108,9 +112,38 @@ public:
 	ConstantGenerator(const ConstantGenerator& cg) : AudioNode(cg) { value = cg.value; } 
 	
 	virtual void processFrame(u64 frame, void *clientData);
+	virtual void initDefaults();
 	float value;
 	
 };
+
+
+class WhiteNoiseGenerator : public AudioNode
+{
+public:
+	WhiteNoiseGenerator(float val) : AudioNode(0,1) {}
+	virtual ~WhiteNoiseGenerator() {}
+	WhiteNoiseGenerator(const WhiteNoiseGenerator& cg) : AudioNode(cg) { } 
+	
+	virtual void processFrame(u64 frame, void *clientData);
+	
+};
+
+
+
+class InitialImpulseGenerator : public AudioNode
+{
+public:
+	InitialImpulseGenerator() : AudioNode(0,1), _triggered(false) { }
+	virtual ~InitialImpulseGenerator() {}
+	InitialImpulseGenerator(const InitialImpulseGenerator& cg) : AudioNode(cg), _triggered(false) { } 
+	
+	virtual void processFrame(u64 frame, void *clientData);
+
+private:
+	bool _triggered;
+};
+
 
 
 class ADSREnvelopeGenerator : public AudioNode 
@@ -122,6 +155,7 @@ public:
 	
 	virtual bool active(u64 frame);
 	virtual void processFrame(u64 frame, void *clientData);
+		
 	void retrigger(u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amp);
 	void retrigger(u64 st, float amp);
 	void retrigger(u64 st);
@@ -167,12 +201,13 @@ private:
 class Multiplier : public AudioNode
 {
 public:
-	Multiplier() : AudioNode(2,1) {}
-	Multiplier(u64 numInputChannels) : AudioNode(numInputChannels,1) {}
+	Multiplier() : AudioNode(2,1) { initDefaults(); }
+	Multiplier(u64 numInputChannels) : AudioNode(numInputChannels,1) { initDefaults(); }
 	virtual ~Multiplier() {}
-	Multiplier(const Multiplier& mp) : AudioNode(mp) {}
+	Multiplier(const Multiplier& mp) : AudioNode(mp) { initDefaults(); }
 	
 	virtual void processFrame(u64 frame, void* clientData);
+	virtual void initDefaults();
 };
 
 
@@ -196,17 +231,20 @@ public:
 	Affine(const Affine& af) : AudioNode(af) {}
 	
 	virtual void processFrame(u64 frame, void* clientData);
+	virtual void initDefaults();
 };
 
 
 class Vibrator : public AudioNode
 {
 public:
-	Vibrator() : AudioNode(2,1) {}
+	Vibrator() : AudioNode(2,1) { initDefaults(); }
 	virtual ~Vibrator() {}
-	Vibrator(const Vibrator& af) : AudioNode(af) {}
+	Vibrator(const Vibrator& af) : AudioNode(af) { initDefaults(); }
 	
 	virtual void processFrame(u64 frame, void* clientData);
+	virtual void initDefaults();
+	
 };
 
 
@@ -257,7 +295,6 @@ private:
 	unsigned _order;
 	double _sampleRate;
 };
-
 
 
 

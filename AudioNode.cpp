@@ -10,6 +10,7 @@ AudioNode::AudioNode(u64 inChannels, u64 outChannels) : _inputConnections(), _la
 {
 	setNumInputChannels(inChannels);
 	setNumOutputChannels(outChannels);
+	initDefaults();
 }
 
 
@@ -17,12 +18,15 @@ AudioNode::AudioNode(const AudioNode& node) : _inputConnections(node._inputConne
 {
 	setNumInputChannels(node.getNumInputChannels());
 	setNumOutputChannels(node.getNumOutputChannels());
+	initDefaults();
 }
 
 void AudioNode::renderGraph(u64 frame, void* clientData)
 {
 	if (_lastFrameProcessed == frame)
 		return;
+		
+	_lastFrameProcessed = frame;	
 	
 	for (unsigned j = 0; j < _inputChannels; j++)
 		_inputBuffer[j] = _defaultInputBuffer[j];
@@ -44,7 +48,6 @@ void AudioNode::renderGraph(u64 frame, void* clientData)
 	}
 
 	processFrame(frame,clientData);
-	_lastFrameProcessed = frame;
 
 	return;
 }
@@ -91,7 +94,14 @@ void AudioNode::setNumInputChannels(const u64 numChannels)
 	_inputBuffer = (float*) calloc(sizeof(float),numChannels);
 	_defaultInputBuffer = (float*) calloc(sizeof(float),numChannels);
 	_inputChannels = numChannels;
+	
 	return;
+}
+
+
+void AudioNode::initDefaults() {
+	for (u64 j=0; j<_inputChannels; j++)
+		_defaultInputBuffer[j] = 0.0f;
 }
 
 
@@ -145,7 +155,7 @@ void AudioNode::removeConnection(u64 toChan)
 }
 
 
-void setDefaultInput(u64 inChannel, float value)
+void AudioNode::setDefaultInput(u64 inChannel, float value)
 {
 	_defaultInputBuffer[inChannel] = value;
 }
@@ -159,8 +169,15 @@ void SineGenerator::processFrame(u64 frame, void* clientData)
 	float& amp = _inputBuffer[1];
 	
 	_phase += double(freq) / _sampleRate;
+	_phase = fmod(_phase,1.0);
 	_outputBuffer[0] = fabs(amp) * float(sin(TWOPI * _phase));
 	return;
+}
+
+
+void SineGenerator::initDefaults() {
+	_defaultInputBuffer[0] = 1000.0f;
+	_defaultInputBuffer[1] = 1.0f;
 }
 
 
@@ -170,10 +187,16 @@ void SawGenerator::processFrame(u64 frame, void* clientData)
 	float& amp = _inputBuffer[1];
 	
 	_phase += double(freq) / _sampleRate;
+	_phase = fmod(_phase,1.0);
+	
 	_outputBuffer[0] = fabs(amp) * float(_phase);
 	return;
 }
 
+void SawGenerator::initDefaults() {
+	_defaultInputBuffer[0] = 1000.0f;
+	_defaultInputBuffer[1] = 1.0f;
+}
 
 
 void ConstantGenerator::processFrame(u64 frame, void* clientData)
@@ -181,6 +204,30 @@ void ConstantGenerator::processFrame(u64 frame, void* clientData)
 	_outputBuffer[0] = value;
 	return;	
 }
+
+
+void ConstantGenerator::initDefaults() {
+	_defaultInputBuffer[0] = 1.0f;
+}
+
+
+void WhiteNoiseGenerator::processFrame(u64 frame, void* clientData)
+{
+	_outputBuffer[0] = rand() / RAND_MAX;
+	return;	
+}
+
+
+void InitialImpulseGenerator::processFrame(u64 frame, void* clientData)
+{
+	if (_triggered)
+		_outputBuffer[0] = 0.0f;
+	else
+		_outputBuffer[0] = 1.0f;
+		
+	return;	
+}
+
 
 
 ADSREnvelopeGenerator::ADSREnvelopeGenerator(u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amp)
@@ -424,6 +471,8 @@ void StereoMixer::processFrame(u64 frame, void* clientData)
 		_outputBuffer[0] += _inputBuffer[j] * _a[j];
 		_outputBuffer[1] += _inputBuffer[j] * _b[j];
 	}
+	_outputBuffer[0] = tanh(_outputBuffer[0]);
+	_outputBuffer[1] = tanh(_outputBuffer[1]);
 }
 
 
@@ -438,6 +487,12 @@ void Multiplier::processFrame(u64 frame, void* clientData)
 		val *= _inputBuffer[j];
 	}
 	_outputBuffer[0] = val;
+}
+
+
+void Multiplier::initDefaults() {
+	_defaultInputBuffer[0] = 1.0f;
+	_defaultInputBuffer[1] = 1.0f;
 }
 
 
@@ -458,9 +513,21 @@ void Affine::processFrame(u64 frame, void* clientData)
 }
 
 
+void Affine::initDefaults() {
+	_defaultInputBuffer[0] = 1.0f;
+	_defaultInputBuffer[1] = 1.0f;
+	_defaultInputBuffer[2] = 0.1f;
+}
+
+
 void Vibrator::processFrame(u64 frame, void* clientData)
 {
 	_outputBuffer[0] = _inputBuffer[0] * (1.0f + _inputBuffer[1]);
+}
+
+void Vibrator::initDefaults() {
+	_defaultInputBuffer[0] = 1.0f;
+	_defaultInputBuffer[1] = 0.1f;
 }
 
 
@@ -492,6 +559,5 @@ void SensorInput::updateBufferFromSource(float* inData, u64 inChans)
 		_outputBuffer[j] = inData[j];
 	}
 }
-
 
 

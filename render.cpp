@@ -14,7 +14,7 @@
 ///// capacitive touch stuff///
 #include "I2C_MPR121.h"
 // How many pins there are
-#define NUM_TOUCH_PINS 3
+#define NUM_TOUCH_PINS 8
 // Define this to print data to terminal
 #undef DEBUG_MPR121
 //////////////////////////////
@@ -46,17 +46,19 @@ float capacitiveIn[NUM_TOUCH_PINS];
 float capacitiveSmoothed[NUM_TOUCH_PINS];
 float capacitiveDetail[NUM_TOUCH_PINS];
 float capacitiveSmoothedDetail[NUM_TOUCH_PINS];
-float capacitiveRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f };
-float capacitiveRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f };
-bool capacitiveKerbang[NUM_TOUCH_PINS] = { false, false, false };
-TimedSchottky capacitiveTrigger[NUM_TOUCH_PINS] = { TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024) };
+float capacitiveRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f };
+float capacitiveRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f };
+bool capacitiveKerbang[NUM_TOUCH_PINS] = { false, false, false, false, false, false, false, false };
+TimedSchottky capacitiveTrigger[NUM_TOUCH_PINS] = { TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024),
+													TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024),
+													TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024) };
 
 float accIn[NUM_TOUCH_PINS];
 float accSmoothed[NUM_TOUCH_PINS];
 float accDetail[NUM_TOUCH_PINS];
 float accSmoothedDetail[NUM_TOUCH_PINS];
-float accRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f };
-float accRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f };
+float accRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f, 0.05f };
+float accRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f };
 
 int solenoidForChannel[8] = { 0, -1, 1, 2, -1, -1, -1, -1};
 //----------------------------------------------------//
@@ -334,13 +336,17 @@ SensorInput* sensors;
 //FIRFilter* filter;
 //DelayLine* delay;
 ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
-ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
-ConstantGenerator* lfo_amp[NUM_TOUCH_PINS];
+//ConstantGenerator* lfo_freq[NUM_TOUCH_PINS];
+//ConstantGenerator* lfo_amp[NUM_TOUCH_PINS];
 ConstantGenerator* freq[NUM_TOUCH_PINS];
-ConstantGenerator* amp[NUM_TOUCH_PINS];
+//ConstantGenerator* amp[NUM_TOUCH_PINS];
 SineGenerator* lfo[NUM_TOUCH_PINS];
 Vibrator* vibrator[NUM_TOUCH_PINS];
-SineGenerator* cycle[NUM_TOUCH_PINS];
+//Affine* affine[NUM_TOUCH_PINS];
+//Adder* adder[NUM_TOUCH_PINS];
+//Multiplier* multiplier[NUM_TOUCH_PINS];
+SawGenerator* cycle[NUM_TOUCH_PINS];
+//InitialImpulseGenerator* kickoff[NUM_TOUCH_PINS];
 StereoMixer* mixer;
 //------------------------//
 
@@ -373,17 +379,28 @@ bool setup(BelaContext *context, void *userData)
 	mixer = new StereoMixer(NUM_TOUCH_PINS);	
 	for (u64 j=0; j<NUM_TOUCH_PINS; j++) { // u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amplitude
 		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 10000, 0, 20000, 1.0f);
-		cycle[j] = new SineGenerator();
+		cycle[j] = new SawGenerator();
 		vibrator[j] = new Vibrator();
-		lfo[j] = new SineGenerator();
+		//affine[j] = new Affine();
+		
+		//adder[j] = new Adder();
+		//multiplier[j] = new Multiplier();
+		lfo[j] = new SineGenerator(); lfo[j]->setDefaultInput(0,10.0f); lfo[j]->setDefaultInput(1,0.3f); 
 		freq[j] = new ConstantGenerator(mtof(scale.pitch(j,6)));
-		lfo_freq[j] = new ConstantGenerator(10.0f);
-		lfo_amp[j] = new ConstantGenerator(0.01f);
-		lfo[j]->receiveConnectionFrom(lfo_freq[j],0,0);
-		lfo[j]->receiveConnectionFrom(lfo_amp[j],0,1);
+		//kickoff[j] = new InitialImpulseGenerator();
+		//lfo_freq[j] = new ConstantGenerator(10.0f);
+		//lfo_amp[j] = new ConstantGenerator(0.01f);
+		//lfo[j]->receiveConnectionFrom(lfo_freq[j],0,0);
+		//lfo[j]->receiveConnectionFrom(lfo_amp[j],0,1);
 		vibrator[j]->receiveConnectionFrom(freq[j],0,0);
 		vibrator[j]->receiveConnectionFrom(lfo[j],0,1);
-				
+		
+		//multiplier[j]->receiveConnectionFrom(vibrator[j],0,0);
+		//multiplier[j]->receiveConnectionFrom(adder[j],0,1);
+						
+		//adder[j]->receiveConnectionFrom(mixer,0,0);
+		//adder[j]->receiveConnectionFrom(kickoff[j],0,0);
+						
 		//cycle[j]->receiveConnectionFrom(freq[j],0,0);
 		cycle[j]->receiveConnectionFrom(vibrator[j],0,0);
 		cycle[j]->receiveConnectionFrom(env[j],0,1);
@@ -588,7 +605,7 @@ void render(BelaContext *context, void *userData)
 		//float ff = vibrator[0]->outputSample(0);
 		//scope.log(ff/1000.0f,0.0,0.0);
 		//scope.log(left_out,inputData[0],inputData[1]);
-		scope.log(lfo[0]->outputSample(0), vibrator[0]->outputSample(0),cycle[0]->outputSample(0));
+		scope.log(lfo[0]->outputSample(0),cycle[0]->outputSample(0),mixer->outputSample(0));
 	}
 
 	
