@@ -10,6 +10,7 @@
 #include <utility>
 #include "AudioNode.h"
 #include "Tonality.h"
+#include "Brain.h"
 
 ///// capacitive touch stuff///
 #include "I2C_MPR121.h"
@@ -71,6 +72,11 @@ AuxiliaryTask playTask;
 
 //------- Tonality -------//
 Scale scale = MajorPentatonic(PitchClass(0));
+//------------------------//
+
+//------- The Brain --------//
+Brain brain;
+
 
 //Scope scope;
 int localPort = 8000;
@@ -165,7 +171,8 @@ int parseMessage(oscpkt::Message msg){
     	
     } else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).popInt32(velocity).isOkNoMoreArgs()) {
     	//rt_printf("Scheduling letter %s at %d %d %d\n", letter.c_str(), bar, beat, tick);
-    	scheduleNotes(bar+1, beat, tick, letter, velocity);
+    	//scheduleNotes(bar+1, beat, tick, letter, velocity);
+    	brain.receiveLetter(bar,beat,tick,letter,velocity);
     }
      
     return b;
@@ -191,6 +198,8 @@ void sendLetter(int bar, int beat, int tick, int vel1, int vel2, int vel3)
 		letter = "b"; velocity = vel2;
 	} else if (vel1) {
 		letter = "a"; velocity = vel1;
+	} else if (tick == 0) {
+		letter = "o";
 	} else {
 		letter = "o";
 		send = false;
