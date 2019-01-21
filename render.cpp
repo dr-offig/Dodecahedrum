@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <string>
 #include <deque>
-#include <list>
-#include <map>
+//#include <list>
+//#include <map>
 #include <utility>
 #include "AudioNode.h"
 #include "Tonality.h"
@@ -44,7 +44,7 @@ float capacitiveDetail[NUM_TOUCH_PINS];
 float capacitiveSmoothedDetail[NUM_TOUCH_PINS];
 float capacitiveRS[NUM_TOUCH_PINS] = { 0.05f, 0.05f, 0.05f, 0.05f, 0.05f };
 float capacitiveRD[NUM_TOUCH_PINS] = { 0.25f, 0.25f, 0.25f, 0.25f, 0.25f };
-bool capacitiveKerbang[NUM_TOUCH_PINS] = { false, false, false, false, false };
+int capacitiveKerbang[NUM_TOUCH_PINS] = { 0, 0, 0, 0, 0 };
 TimedSchottky capacitiveTrigger[NUM_TOUCH_PINS] = { TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024),
 													TimedSchottky(0.05f, 0.000f, 1024), TimedSchottky(0.05f, 0.000f, 1024) };
 
@@ -84,7 +84,7 @@ OneShot hits[NUM_TOUCH_PINS];
 
 // typedef struct transport transport;
 
-deque<uint64_t> scheduledOnsets[NUM_SOLENOIDS];
+deque<pair<uint64_t,int> > scheduledOnsets[NUM_SOLENOIDS];
 
 int gAudioFramesPerAnalogFrame;
 
@@ -102,34 +102,37 @@ void changeTempo(float new_tempo, float sr)
 	analogFramesPerTick = int(sr * 60.0f / (tempo * float(D)));
 }
 
-void scheduleNote(int bar, int beat, int tick, int panel)
+
+bool earlier(pair<uint64_t,int> note1, pair<uint64_t,int> note2) { return note1.first < note2.first; } 
+
+void scheduleNote(int bar, int beat, int tick, int panel, int velocity)
 {
 	uint64_t onset = bar * B * D + beat * D + tick;
-	scheduledOnsets[panel].push_back(onset);
+	scheduledOnsets[panel].push_back(make_pair(onset,velocity));
 	//rt_printf("Pushed note on panel %d for onset %d\n", panel, onset);
-	sort(scheduledOnsets[panel].begin(),scheduledOnsets[panel].end());
+	sort(scheduledOnsets[panel].begin(),scheduledOnsets[panel].end(),earlier);
 }
 
 
-void scheduleNotes(int bar, int beat, int tick, string letter)
+void scheduleNotes(int bar, int beat, int tick, string letter, int velocity)
 {
 	if (letter == "g") {
-		scheduleNote(bar, beat, tick, 0);
-		scheduleNote(bar, beat, tick, 1);
-		scheduleNote(bar, beat, tick, 2);
+		scheduleNote(bar, beat, tick, 0, velocity);
+		scheduleNote(bar, beat, tick, 1, velocity);
+		scheduleNote(bar, beat, tick, 2, velocity);
 	} else if (letter == "f") {
-		scheduleNote(bar, beat, tick, 0);
-		scheduleNote(bar, beat, tick, 1);
+		scheduleNote(bar, beat, tick, 0, velocity);
+		scheduleNote(bar, beat, tick, 1, velocity);
 	} else if (letter == "e") {
-		scheduleNote(bar, beat, tick, 4);
+		scheduleNote(bar, beat, tick, 4, velocity);
 	} else if (letter == "d") {
-		scheduleNote(bar, beat, tick, 3);
+		scheduleNote(bar, beat, tick, 3, velocity);
 	} else if (letter == "c") {
-		scheduleNote(bar, beat, tick, 2);
+		scheduleNote(bar, beat, tick, 2, velocity);
 	} else if (letter == "b") {
-		scheduleNote(bar, beat, tick, 1);
+		scheduleNote(bar, beat, tick, 1, velocity);
 	} else if (letter == "a") {
-		scheduleNote(bar, beat, tick, 0);
+		scheduleNote(bar, beat, tick, 0, velocity);
 	}
 	
 }
@@ -141,7 +144,7 @@ int parseMessage(oscpkt::Message msg){
     
     //printf("received message to: %s\n", msg.addressPattern().c_str());
     
-    int a; int b; int bar; int beat; int tick;
+    int a; int b; int bar; int beat; int tick; int velocity;
     string ipAddress; string letter;
     
     
@@ -160,40 +163,41 @@ int parseMessage(oscpkt::Message msg){
     		h.trigger = true;
     	}
     	
-    } else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).isOkNoMoreArgs()) {
+    } else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).popInt32(velocity).isOkNoMoreArgs()) {
     	//rt_printf("Scheduling letter %s at %d %d %d\n", letter.c_str(), bar, beat, tick);
-    	scheduleNotes(bar, beat, tick, letter);
+    	scheduleNotes(bar+1, beat, tick, letter, velocity);
     }
      
     return b;
 }
 
 
-void sendLetter(int bar, int beat, int tick, bool panel1, bool panel2, bool panel3)
+void sendLetter(int bar, int beat, int tick, int vel1, int vel2, int vel3)
 {
 	bool send = true;
 	string letter;
-	if (panel1 && panel2 && panel3)
-		letter = "g";
-	else if (panel1 && panel2)
-		letter = "f";
-	else if (panel2 && panel3)
-		letter = "e";
-	else if (panel1 && panel3)
-		letter = "d";
-	else if (panel3)
-		letter = "c";
-	else if (panel2)
-		letter = "b";
-	else if (panel1)
-		letter = "a";
-	else {
+	int velocity = 0;
+	if (vel1 && vel2 && vel3) {
+		letter = "g"; velocity = (vel1 + vel2 + vel3) / 3;
+	} else if (vel1 && vel2) {
+		letter = "f"; velocity = (vel1 + vel2) / 2;
+	} else if (vel2 && vel3) {
+		letter = "e"; velocity = (vel2 + vel3) / 2;
+	} else if (vel1 && vel3) {
+		letter = "d"; velocity = (vel1 + vel3) / 2;
+	} else if (vel3) {
+		letter = "c"; velocity = vel3;
+	} else if (vel2) {
+		letter = "b"; velocity = vel2;
+	} else if (vel1) {
+		letter = "a"; velocity = vel1;
+	} else {
 		letter = "o";
 		send = false;
 	}
 
 	if (send) {
-		oscpkt::Message msg = oscClient.newMessage.to("/letter").add(bar).add(beat).add(tick).add(letter).end();
+		oscpkt::Message msg = oscClient.newMessage.to("/letter").add(bar).add(beat).add(tick).add(letter).add(velocity).end();
 		outbox.push_back(msg);
 	}
 
@@ -218,18 +222,31 @@ void sendOSC(void *clientData)
 // -------------------------------------- //
 
 
+
+//----- Audio Graph -------//
+ExternalAudioSource* audioInNode;
+SensorInput* sensors;
+ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
+ConstantGenerator* freq[NUM_TOUCH_PINS];
+SineGenerator* lfo[NUM_TOUCH_PINS];
+Vibrator* vibrator[NUM_TOUCH_PINS];
+SawGenerator* cycle[NUM_TOUCH_PINS];
+StereoMixer* mixer;
+//------------------------//
+
+
 void playNotes(void *clientData)
 {
 	for (int i=0; i<3; i++)
 	{
 		if (!scheduledOnsets[i].empty()) {
-			uint64_t nextOnset = scheduledOnsets[i].front();
+			uint64_t nextOnset = scheduledOnsets[i].front().first;
 			if (nextOnset <= globalTick) {
 				//rt_printf("Playing note on panel %d scheduled for %lld at actual time %lld\n\n", i, nextOnset, globalTick);
 				OneShot& h = hits[i];
-        		h.amplitude = 1.0;
+        		h.amplitude = float(scheduledOnsets[i].front().second) / 127.0;
     			h.trigger = true;
-    			scheduledOnsets[i].pop_front();
+     			scheduledOnsets[i].pop_front();
 			}
 		}
 	}
@@ -252,16 +269,6 @@ void readMPR121(void*)
 
 
 
-//----- Audio Graph -------//
-ExternalAudioSource* audioInNode;
-SensorInput* sensors;
-ADSREnvelopeGenerator* env[NUM_TOUCH_PINS];
-ConstantGenerator* freq[NUM_TOUCH_PINS];
-SineGenerator* lfo[NUM_TOUCH_PINS];
-Vibrator* vibrator[NUM_TOUCH_PINS];
-SawGenerator* cycle[NUM_TOUCH_PINS];
-StereoMixer* mixer;
-//------------------------//
 
 bool setup(BelaContext *context, void *userData)
 {
@@ -283,10 +290,10 @@ bool setup(BelaContext *context, void *userData)
 	//filter->receiveConnectionFrom(sensors,0,0);
 	mixer = new StereoMixer(NUM_TOUCH_PINS);	
 	for (u64 j=0; j<NUM_TOUCH_PINS; j++) { // u64 a, u64 d, float s, u64 r, u64 st, u64 dur, float amplitude
-		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 10000, 0, 20000, 1.0f);
+		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 5000, 0, 10000, 1.0f);
 		cycle[j] = new SawGenerator();
 		vibrator[j] = new Vibrator();
-		lfo[j] = new SineGenerator(); lfo[j]->setDefaultInput(0,10.0f); lfo[j]->setDefaultInput(1,0.3f); 
+		lfo[j] = new SineGenerator(); lfo[j]->setDefaultInput(0,5.0f); lfo[j]->setDefaultInput(1,0.2f); 
 		freq[j] = new ConstantGenerator(mtof(scale.pitch(j,6)));
 		vibrator[j]->receiveConnectionFrom(freq[j],0,0);
 		vibrator[j]->receiveConnectionFrom(lfo[j],0,1);
@@ -312,8 +319,8 @@ bool setup(BelaContext *context, void *userData)
 	
 	// render(context,userData);
 	// render(context,userData);
-	printf("Scale: %d %d %d %d %d %d %d\n", scale.pitch(0,5), scale.pitch(1,5), scale.pitch(2,5), scale.pitch(3,5),
-											scale.pitch(4,5), scale.pitch(5,5), scale.pitch(6,5));
+	//printf("Scale: %d %d %d %d %d %d %d\n", scale.pitch(0,5), scale.pitch(1,5), scale.pitch(2,5), scale.pitch(3,5),
+	//										scale.pitch(4,5), scale.pitch(5,5), scale.pitch(6,5));
 	
 	return true;
 }
@@ -344,14 +351,14 @@ void render(BelaContext *context, void *userData)
 					
 			// Check for sudden loud inputs
 			if (capacitiveTrigger[i].update(fabs(capacitiveSmoothedDetail[i]))) {
-				capacitiveKerbang[i] = true;
+				
 				OneShot& h = hits[i];
-    		    h.amplitude = 1.0f;
-    		    
+    		    h.amplitude = value * 10.0f;
+    		    capacitiveKerbang[i] = int(h.amplitude * 127.0);
 	    		h.duration = uint64_t(512.0f * 2.0f * value);
 	    		h.trigger = true;
 	
-				env[i]->retrigger(t, 10.0f * value);
+				
 			}
 				
 							
@@ -397,6 +404,7 @@ void render(BelaContext *context, void *userData)
 				{
 					if (hits[j].trigger) {
 						hits[j].start = t;
+						env[j]->retrigger(t, hits[j].amplitude);
 						hits[j].trigger = false;
 					}
 
@@ -455,7 +463,7 @@ void render(BelaContext *context, void *userData)
 	if (tickedOff) 
 	{
 		sendLetter(bar, beat, tick, capacitiveKerbang[0], capacitiveKerbang[1], capacitiveKerbang[2]);
-		capacitiveKerbang[0] = false; capacitiveKerbang[1] = false; capacitiveKerbang[2] = false;
+		capacitiveKerbang[0] = 0; capacitiveKerbang[1] = 0; capacitiveKerbang[2] = 0;
 		tickedOff = false;
 	}
 
