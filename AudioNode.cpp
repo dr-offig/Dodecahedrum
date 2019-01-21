@@ -230,6 +230,79 @@ void ADSREnvelopeGenerator::retrigger(u64 st) {
 
 
 
+
+/************* Effects ************/
+
+void DelayLine::processFrame(u64 frame, void* clientData)
+{
+	_pipeline.shift(_inputBuffer[0],_outputBuffer);
+}
+
+
+
+FIRFilter::FIRFilter(unsigned n) : AudioNode(1,1), _pipeline(n, 0.0f), _order(n), _sampleRate(44100.0)
+{
+	_filterCoefficients = (float *)malloc(sizeof(float) * n);
+	_filterCoefficients[0] = 1.0f;
+	for (unsigned j=1; j<n; j++)
+		_filterCoefficients[j] = 0.0f;
+}
+
+
+FIRFilter::~FIRFilter() {
+	free(_filterCoefficients);
+}
+
+
+FIRFilter::FIRFilter(const FIRFilter& fir) : AudioNode(fir), _pipeline(fir._pipeline), _order(fir._order), _sampleRate(fir._sampleRate)
+{
+	_filterCoefficients = (float *)malloc(sizeof(float) * _order);
+	for (unsigned j = 0; j < _order; j++)
+		_filterCoefficients[j] = fir._filterCoefficients[j];
+}
+
+
+void FIRFilter::processFrame(u64 frame, void* clientData)
+{
+	_outputBuffer[0] = 0.0f;
+	for (unsigned j = 0; j < _order; j++)
+		_outputBuffer[j] += _pipeline[j] * _filterCoefficients[j];
+		
+	_pipeline.add(_inputBuffer[0]);
+}
+
+
+void FIRFilter::setTap(unsigned t, float h)
+{
+	if (t < _order)
+		_filterCoefficients[t] = h;
+}
+
+
+/*
+import numpy as np
+ 
+fc = 0.1  # Cutoff frequency as a fraction of the sampling rate (in (0, 0.5)).
+b = 0.08  # Transition band, as a fraction of the sampling rate (in (0, 0.5)).
+N = int(np.ceil((4 / b)))
+if not N % 2: N += 1  # Make sure that N is odd.
+n = np.arange(N)
+ 
+# Compute sinc filter.
+h = np.sinc(2 * fc * (n - (N - 1) / 2.))
+ 
+# Compute Blackman window.
+w = 0.42 - 0.5 * np.cos(2 * np.pi * n / (N - 1)) + \
+    0.08 * np.cos(4 * np.pi * n / (N - 1))
+ 
+# Multiply sinc filter with window.
+h = h * w
+ 
+# Normalize to get unity gain.
+h = h / np.sum(h)
+*/
+
+
 /************* Mixers *************/
 
 StereoMixer::StereoMixer() : AudioNode(2,2), _c(sqrt(2.0)/2.0), _pan(NULL), _a(NULL), _b(NULL)

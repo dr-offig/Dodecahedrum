@@ -7,6 +7,8 @@
 #include <vector>
 #include <stdlib.h>
 #include <math.h>
+#include <deque>
+#include "RingBuffer.h"
 
 #define u64 uint64_t
 
@@ -214,6 +216,42 @@ public:
 	Splitter(const Splitter& sp) : AudioNode(sp) {}
 	
 	virtual void processFrame(u64 frame, void* clientData);
+};
+
+
+
+/************** effects *****************/
+
+class DelayLine : public AudioNode
+{
+public:
+	DelayLine(unsigned n) : AudioNode(1,1), _pipeline(n, 0.0f) {}
+	virtual ~DelayLine() {}
+	DelayLine(const DelayLine& dl) : AudioNode(dl), _pipeline(dl._pipeline) {}
+	
+	virtual void processFrame(u64 frame, void* clientData);
+
+private:
+	ShiftingPool<float> _pipeline;
+	
+};
+
+
+class FIRFilter : public AudioNode
+{
+public:
+	FIRFilter(unsigned n);
+	virtual ~FIRFilter();
+	FIRFilter(const FIRFilter& fl);
+	
+	virtual void processFrame(u64 frame, void* clientData);
+	void setTap(unsigned t, float h);
+
+private:
+	ShiftingPool<float> _pipeline;
+	float* _filterCoefficients;
+	unsigned _order;
+	double _sampleRate;
 };
 
 
