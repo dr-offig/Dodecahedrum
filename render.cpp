@@ -59,6 +59,22 @@ float accIn[NUM_TOUCH_PINS];
 int solenoidForChannel[8] = { 0, -1, 1, 2, 3, 4, -1, -1};
 //----------------------------------------------------//
 
+
+template <typename D> 
+void arrayCopy(D* fromArray, D* toArray, unsigned lngth) {
+	for (unsigned j=0; j<lngth; j++)
+		toArray[j] = fromArray[j];
+}
+
+template <typename D> 
+void arraySet(D* array, D value, unsigned lngth) {
+	for (unsigned j=0; j<lngth; j++)
+		array[j] = value;
+}
+
+
+
+
 //--- OSC communication ----//
 AuxiliaryTask oscServerTask;
 AuxiliaryTask oscClientTask;
@@ -70,12 +86,21 @@ deque<oscpkt::Message> outbox;
 AuxiliaryTask playTask;
 
 
+
+
 //------- Tonality -------//
 Scale scale = MajorPentatonic(PitchClass(0));
 //------------------------//
 
+
+
+
 //------- The Brain --------//
 Brain brain;
+AuxiliaryTask brainTask;
+//--------------------------//
+
+
 
 
 //Scope scope;
@@ -151,7 +176,7 @@ int parseMessage(oscpkt::Message msg){
     //printf("received message to: %s\n", msg.addressPattern().c_str());
     
     int a; int b; int bar; int beat; int tick; int velocity;
-    string ipAddress; string letter;
+    string ipAddress; string letter; int panel;
     
     
     if (msg.match("/host").popStr(ipAddress).popInt32(b).isOkNoMoreArgs()){
@@ -169,51 +194,78 @@ int parseMessage(oscpkt::Message msg){
     		h.trigger = true;
     	}
     	
-    } else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).popInt32(velocity).isOkNoMoreArgs()) {
-    	//rt_printf("Scheduling letter %s at %d %d %d\n", letter.c_str(), bar, beat, tick);
-    	//scheduleNotes(bar+1, beat, tick, letter, velocity);
-    	brain.receiveLetter(bar,beat,tick,letter,velocity);
+    } else if (msg.match("/detected").popInt32(bar).popInt32(beat).popInt32(tick).popInt32(panel).popInt32(velocity).isOkNoMoreArgs()) {
+    	brain.registerHit(bar,beat,tick,panel,velocity);
+    	
+    } else if (msg.match("/beat").popInt32(bar).popInt32(beat).isOkNoMoreArgs()) {
+    	brain.registerBeat(bar, beat);
     }
+    
+    // else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).popInt32(velocity).isOkNoMoreArgs()) {
+    // 	//rt_printf("Scheduling letter %s at %d %d %d\n", letter.c_str(), bar, beat, tick);
+    // 	//scheduleNotes(bar+1, beat, tick, letter, velocity);
+    // 	brain.receiveLetter(bar,beat,tick,letter,velocity);
+    // }
      
     return b;
 }
 
 
-void sendLetter(int bar, int beat, int tick, int vel1, int vel2, int vel3)
-{
-	bool send = true;
-	string letter;
-	int velocity = 0;
-	if (vel1 && vel2 && vel3) {
-		letter = "g"; velocity = (vel1 + vel2 + vel3) / 3;
-	} else if (vel1 && vel2) {
-		letter = "f"; velocity = (vel1 + vel2) / 2;
-	} else if (vel2 && vel3) {
-		letter = "e"; velocity = (vel2 + vel3) / 2;
-	} else if (vel1 && vel3) {
-		letter = "d"; velocity = (vel1 + vel3) / 2;
-	} else if (vel3) {
-		letter = "c"; velocity = vel3;
-	} else if (vel2) {
-		letter = "b"; velocity = vel2;
-	} else if (vel1) {
-		letter = "a"; velocity = vel1;
-	} else if (tick == 0) {
-		letter = "o";
-	} else {
-		letter = "o";
-		send = false;
-	}
+// void sendLetter(int bar, int beat, int tick, int vel1, int vel2, int vel3)
+// {
+// 	bool send = true;
+// 	string letter;
+// 	int velocity = 0;
+// 	if (vel1 && vel2 && vel3) {
+// 		letter = "g"; velocity = (vel1 + vel2 + vel3) / 3;
+// 	} else if (vel1 && vel2) {
+// 		letter = "f"; velocity = (vel1 + vel2) / 2;
+// 	} else if (vel2 && vel3) {
+// 		letter = "e"; velocity = (vel2 + vel3) / 2;
+// 	} else if (vel1 && vel3) {
+// 		letter = "d"; velocity = (vel1 + vel3) / 2;
+// 	} else if (vel3) {
+// 		letter = "c"; velocity = vel3;
+// 	} else if (vel2) {
+// 		letter = "b"; velocity = vel2;
+// 	} else if (vel1) {
+// 		letter = "a"; velocity = vel1;
+// 	} else if (tick == 0) {
+// 		letter = "o";
+// 	} else {
+// 		letter = "o";
+// 		send = false;
+// 	}
 
-	if (send) {
-		oscpkt::Message msg = oscClient.newMessage.to("/letter").add(bar).add(beat).add(tick).add(letter).add(velocity).end();
+// 	if (send) {
+// 		oscpkt::Message msg = oscClient.newMessage.to("/letter").add(bar).add(beat).add(tick).add(letter).add(velocity).end();
+// 		outbox.push_back(msg);
+// 	}
+
+// }
+
+
+
+void registerActivity(int bar, int beat, int tick, int* velocities, unsigned lngth)
+{
+	for (int j=0; j<lngth; j++) {
+		int velocity = velocities[j];
+		if (velocity) {
+			oscpkt::Message msg = oscClient.newMessage.to("/detected").add(bar).add(beat).add(tick).add(j).add(velocity).end();
+			outbox.push_back(msg);
+		}
+	}
+	
+	if (tick == 0) {
+		oscpkt::Message msg = oscClient.newMessage.to("/beat").add(bar).add(beat).end();
 		outbox.push_back(msg);
 	}
 
 }
 
 
-// Auxiliary task callbacks
+
+//------- Auxiliary task callbacks -------//
 void receiveOSC(void *clientData)
 {
 	while (oscServer.messageWaiting())
@@ -227,6 +279,13 @@ void sendOSC(void *clientData)
 		oscClient.sendMessageNow(outbox.front());
 		outbox.pop_front();
 	}		
+}
+
+
+void think(void* clientData)
+{
+	Brain* pBrain = (Brain*)clientData;
+	pBrain->think();
 }
 // -------------------------------------- //
 
@@ -286,6 +345,7 @@ bool setup(BelaContext *context, void *userData)
 	oscServerTask = Bela_createAuxiliaryTask(receiveOSC, BELA_AUDIO_PRIORITY - 30, "receive-osc", NULL);
 	oscClientTask = Bela_createAuxiliaryTask(sendOSC, BELA_AUDIO_PRIORITY - 20, "send-osc", NULL);
 	playTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 10,"play", NULL);
+	brainTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 40,"think", &brain);
 
 	//analogSensorValues = (float*)malloc(sizeof(float) * context->analogInChannels);
 	audioInNode = new ExternalAudioSource();
@@ -471,8 +531,10 @@ void render(BelaContext *context, void *userData)
 	// send message for this tick
 	if (tickedOff) 
 	{
-		sendLetter(bar, beat, tick, capacitiveKerbang[0], capacitiveKerbang[1], capacitiveKerbang[2]);
-		capacitiveKerbang[0] = 0; capacitiveKerbang[1] = 0; capacitiveKerbang[2] = 0;
+		//sendLetter(bar, beat, tick, capacitiveKerbang[0], capacitiveKerbang[1], capacitiveKerbang[2]);
+		registerActivity(bar,beat,tick,capacitiveKerbang,NUM_TOUCH_PINS);
+		//capacitiveKerbang[0] = 0; capacitiveKerbang[1] = 0; capacitiveKerbang[2] = 0; capacitiveKerbang[3] = 0; capacitiveKerbang[4] = 0;
+		arraySet(capacitiveKerbang,0,NUM_TOUCH_PINS);
 		tickedOff = false;
 	}
 
