@@ -24,6 +24,9 @@ void AudioNode::renderGraph(u64 frame, void* clientData)
 	if (_lastFrameProcessed == frame)
 		return;
 	
+	for (unsigned j = 0; j < _inputChannels; j++)
+		_inputBuffer[j] = _defaultInputBuffer[j];
+	
 	AudioNode* lnd = NULL;
 	vector<AudioConnection*>::iterator j;
 	for (j=_inputConnections.begin(); j != _inputConnections.end(); ++j) {
@@ -49,11 +52,15 @@ void AudioNode::renderGraph(u64 frame, void* clientData)
 
 void AudioNode::processFrame(u64 frame, void* clientData)
 {
-	for (int i=0; i<_outputChannels; i++)
-		_outputBuffer[i] = 0.0f;
-		
+	for (int i=0; i<_outputChannels; i++) {
+		if (i < _inputChannels)
+			_outputBuffer[i] = _inputBuffer[i];
+		else
+			_outputBuffer[i] = 0.0f;
+	}	
 	return;
 }
+
 
 void AudioNode::setNumOutputChannels(const u64 numChannels)
 {
@@ -75,7 +82,14 @@ void AudioNode::setNumInputChannels(const u64 numChannels)
 		_inputBuffer = NULL;
 	}
 
+	if (_defaultInputBuffer != NULL) {
+		free(_defaultInputBuffer);
+		_defaultInputBuffer = NULL;
+	}
+
+
 	_inputBuffer = (float*) calloc(sizeof(float),numChannels);
+	_defaultInputBuffer = (float*) calloc(sizeof(float),numChannels);
 	_inputChannels = numChannels;
 	return;
 }
@@ -117,6 +131,24 @@ void AudioNode::receiveConnectionFrom(AudioNode* upstream, u64 fromChan, u64 toC
 	return;
 }
 
+
+void AudioNode::removeConnection(u64 toChan)
+{
+	_defaultInputBuffer[toChan] = _inputBuffer[toChan];
+	int existingConnectionIndex = indexOfConnection(toChan);
+	if (existingConnectionIndex >= 0) {
+		delete _inputConnections.at(existingConnectionIndex);
+		_inputConnections.erase(_inputConnections.begin() + (unsigned)existingConnectionIndex);
+	}
+	
+	return;
+}
+
+
+void setDefaultInput(u64 inChannel, float value)
+{
+	_defaultInputBuffer[inChannel] = value;
+}
 
 
 /*********** Generators ***********/

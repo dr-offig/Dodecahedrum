@@ -38,9 +38,9 @@ protected:
 class AudioNode
 {
 public:
-	AudioNode() : _inputBuffer(NULL), _outputBuffer(NULL), _inputChannels(0), _outputChannels(0), _inputConnections(), _lastFrameProcessed(0) {}
+	AudioNode() : _inputBuffer(NULL), _outputBuffer(NULL), _defaultInputBuffer(NULL), _inputChannels(0), _outputChannels(0), _inputConnections(), _lastFrameProcessed(0) {}
 	AudioNode(u64 inChannels, u64 outChannels);
-	virtual ~AudioNode() { free(_inputBuffer); free(_outputBuffer); }
+	virtual ~AudioNode() { free(_inputBuffer); free(_outputBuffer); free(_defaultInputBuffer); }
 	AudioNode(const AudioNode&);
 	
 	virtual bool active(u64 frame) { return true; }	
@@ -55,10 +55,13 @@ public:
 	int indexOfConnection(const u64 channel);
 	AudioConnection* whatIsConnectedTo(const u64 channel);
 	void receiveConnectionFrom(AudioNode* fromNode, u64 fromChannel, u64 toChannel);
+	void removeConnection(u64 toChannel);
+	void setDefaultInput(u64 inChannel,float value);
 	
 protected:
 	float* _inputBuffer;
 	float* _outputBuffer;
+	float* _defaultInputBuffer;
 	u64 _inputChannels;
 	u64 _outputChannels;
 	vector<AudioConnection*> _inputConnections;
