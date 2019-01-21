@@ -240,7 +240,7 @@ void DelayLine::processFrame(u64 frame, void* clientData)
 
 
 
-FIRFilter::FIRFilter(unsigned n) : AudioNode(1,1), _pipeline(n, 0.0f), _order(n), _sampleRate(44100.0)
+FIRFilter::FIRFilter(unsigned n) : AudioNode(1,2), _pipeline(n, 0.0f), _order(n), _sampleRate(44100.0)
 {
 	_filterCoefficients = (float *)malloc(sizeof(float) * n);
 	_filterCoefficients[0] = 1.0f;
@@ -264,11 +264,13 @@ FIRFilter::FIRFilter(const FIRFilter& fir) : AudioNode(fir), _pipeline(fir._pipe
 
 void FIRFilter::processFrame(u64 frame, void* clientData)
 {
+	float drySample = 0.0f;
 	_outputBuffer[0] = 0.0f;
 	for (unsigned j = 0; j < _order; j++)
 		_outputBuffer[0] += _pipeline[j] * _filterCoefficients[j];
 		
-	_pipeline.add(_inputBuffer[0]);
+	_pipeline.shift(_inputBuffer[0],&drySample);
+	_outputBuffer[1] = drySample - _outputBuffer[0];
 }
 
 
