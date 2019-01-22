@@ -82,6 +82,7 @@ AuxiliaryTask oscClientTask;
 OSCServer oscServer;
 OSCClient oscClient;
 deque<oscpkt::Message> outbox;
+int localPort = 8000;
 //------------------------//
 AuxiliaryTask playTask;
 
@@ -104,16 +105,7 @@ AuxiliaryTask brainTask;
 
 
 //Scope scope;
-int localPort = 8000;
 OneShot hits[NUM_TOUCH_PINS];
-
-// struct transport {
-// 	int bar;
-// 	int beat;
-// 	int tick;
-// };
-
-// typedef struct transport transport;
 
 deque<pair<uint64_t,int> > scheduledOnsets[NUM_SOLENOIDS];
 
@@ -199,6 +191,9 @@ int parseMessage(oscpkt::Message msg){
     	
     } else if (msg.match("/beat").popInt32(bar).popInt32(beat).isOkNoMoreArgs()) {
     	brain.registerBeat(bar, beat);
+
+    } else if (msg.match("/schedule").popInt32(bar).popInt32(beat).popInt32(tick).popInt32(panel).popInt32(velocity).isOkNoMoreArgs()) {
+    	scheduleNote(bar, beat, tick, panel % NUM_SOLENOIDS, velocity);		
     }
     
     // else if (msg.match("/letter").popInt32(bar).popInt32(beat).popInt32(tick).popStr(letter).popInt32(velocity).isOkNoMoreArgs()) {
@@ -342,10 +337,11 @@ bool setup(BelaContext *context, void *userData)
 {
 	oscServer.setup(localPort);
 	oscClient.setup(localPort, "localhost");
+	brain.setupOSC(localPort);
 	oscServerTask = Bela_createAuxiliaryTask(receiveOSC, BELA_AUDIO_PRIORITY - 30, "receive-osc", NULL);
 	oscClientTask = Bela_createAuxiliaryTask(sendOSC, BELA_AUDIO_PRIORITY - 20, "send-osc", NULL);
 	playTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 10,"play", NULL);
-	brainTask = Bela_createAuxiliaryTask(playNotes, BELA_AUDIO_PRIORITY - 40,"think", &brain);
+	brainTask = Bela_createAuxiliaryTask(think, BELA_AUDIO_PRIORITY - 40,"think", &brain);
 
 	//analogSensorValues = (float*)malloc(sizeof(float) * context->analogInChannels);
 	audioInNode = new ExternalAudioSource();
@@ -362,7 +358,7 @@ bool setup(BelaContext *context, void *userData)
 		env[j] = new ADSREnvelopeGenerator(2000, 1000, 0.8f, 5000, 0, 10000, 1.0f);
 		cycle[j] = new SawGenerator();
 		vibrator[j] = new Vibrator();
-		lfo[j] = new SineGenerator(); lfo[j]->setDefaultInput(0,5.0f); lfo[j]->setDefaultInput(1,0.2f); 
+		lfo[j] = new SineGenerator(); lfo[j]->setDefaultInput(0,8.0f); lfo[j]->setDefaultInput(1,0.2f); 
 		freq[j] = new ConstantGenerator(mtof(scale.pitch(j,6)));
 		vibrator[j]->receiveConnectionFrom(freq[j],0,0);
 		vibrator[j]->receiveConnectionFrom(lfo[j],0,1);
@@ -400,6 +396,8 @@ void render(BelaContext *context, void *userData)
 	Bela_scheduleAuxiliaryTask(oscClientTask);
 	Bela_scheduleAuxiliaryTask(playTask);
 	Bela_scheduleAuxiliaryTask(i2cTask);
+	Bela_scheduleAuxiliaryTask(brainTask);
+	
 	
 	for (unsigned int frame = 0; frame < context->audioFrames; ++frame)
 	{

@@ -26,7 +26,7 @@ public:																	// this function is here to allow internal access to the
 	T& first() { return pool_[S_]; }                                    /**< Access first element */     
 	
 	void reset() { L_ = 0; S_ = 0; }                                    /**< Clear out data */
-	void add(T& x);                                                     /**< Shift in new element at end */
+	void add(const T& x);                                               /**< Shift in new element at end */
 	void shift(T& in, T* out);											/**< Shift in new element at end and shift out the first element*/	
 	int length() const {return L_; }                                    /**< The current length */      
 	int capacity() const {return N_; }                                  /**< The maximum length */
@@ -130,7 +130,7 @@ ShiftingPool<T>::~ShiftingPool() {
 }
 
 template <class T>
-void ShiftingPool<T>::add(T& x) {
+void ShiftingPool<T>::add(const T& x) {
 	if (N_ == 0)
 		return;
 	
