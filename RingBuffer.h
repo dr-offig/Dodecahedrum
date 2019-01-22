@@ -1,4 +1,8 @@
 /***** RingBuffer.h *****/
+//
+// © copyright Toby Gifford 2011
+//
+//
 
 #ifndef __RING_BUFFER__
 #define __RING_BUFFER__
